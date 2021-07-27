@@ -21,10 +21,16 @@ package windowing.frames;
 import org.apache.flink.streaming.api.windowing.evictors.Evictor;
 import org.apache.flink.streaming.api.windowing.windows.GlobalWindow;
 import org.apache.flink.streaming.runtime.operators.windowing.TimestampedValue;
+import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 
 import java.util.Collection;
+import java.util.Comparator;
+import java.util.Iterator;
+import java.util.Optional;
 import java.util.function.BiFunction;
 import java.util.function.ToLongFunction;
+import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 
 public class AggregateWindowing<I> extends FrameWindowing<I> {
 
@@ -76,11 +82,6 @@ public class AggregateWindowing<I> extends FrameWindowing<I> {
         mapState.setAggregate(agg.apply(arg, mapState.getAggregate()));
     }
 
-    @Override
-    protected Collection<FrameState> processOutOfOrder(long ts, long arg, FrameState rebuildingFrameState) throws Exception {
-        //TODO: Add the OOO Processing, probably involving the content from the State backend
-        return null;
-    }
 
     @Override
     public Evictor<I, GlobalWindow> evictor() {

@@ -23,8 +23,7 @@ import java.util.function.ToLongFunction;
 
 public class InteractiveRunner {
 
-    private static final String JOB_TYPE = "frame_multi_threshold";
-    private static final String PRE_PATH = "/Users/samuelelanghi/Documents/projects/frink/src/main/resources";
+    private static final String JOB_TYPE = "frame_multi_delta";
 
     public static void main(String[] args) throws Exception {
 
@@ -114,10 +113,8 @@ public class InteractiveRunner {
 
     public static class FixedSource implements SourceFunction<SpeedEvent> {
         private volatile boolean running = true;
-
-
         @Override
-        public void run(SourceContext<SpeedEvent> ctx) throws Exception {
+        public void run(SourceContext<SpeedEvent> ctx) {
             if (running)
             {
                 ctx.collectWithTimestamp(new SpeedEvent("1", 1000, 55),1000);
@@ -129,7 +126,6 @@ public class InteractiveRunner {
                 ctx.collectWithTimestamp(new SpeedEvent("1", 12000, 60),12000);
                 ctx.collectWithTimestamp(new SpeedEvent("1", 5000, 20),5000);
                 ctx.collectWithTimestamp(new SpeedEvent("1", 9000, 20),9000);
-
             }
         }
 

@@ -2,16 +2,15 @@ package windowing;
 
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.runtime.state.StateTransformationFunction;
+import org.apache.flink.runtime.state.internal.InternalListState;
 import org.apache.flink.runtime.state.internal.InternalMergingState;
 
-import java.util.Collection;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 import java.util.function.BiPredicate;
 
 public class SplittingHeapListState<K, N, V> implements InternalSplitAndMergeState<K, N, V, List<V>, Iterable<V>> {
 
-    protected final InternalMergingState<K, N, V, List<V>, Iterable<V>> internalMergingState;
+    protected final InternalListState<K, N, V> internalMergingState;
 
 //    /** The current namespace, which the access methods will refer to. */
 //    protected N currentNamespace;
@@ -28,7 +27,7 @@ public class SplittingHeapListState<K, N, V> implements InternalSplitAndMergeSta
 
     protected SplittingHeapListState(
             InternalMergingState<K, N, V, List<V>, Iterable<V>> heapListState) {
-        this.internalMergingState = heapListState;
+        this.internalMergingState = (InternalListState<K, N, V>) heapListState;
 //        this.stateTable = Preconditions.checkNotNull(, "State table must not be null.");
 //        this.keySerializer = keySerializer;
 //        this.valueSerializer = valueSerializer;
@@ -89,7 +88,7 @@ public class SplittingHeapListState<K, N, V> implements InternalSplitAndMergeSta
     @Override
     public List<V> getInternal() {
         try {
-            internalMergingState.getInternal();
+            return internalMergingState.getInternal();
         } catch (Exception e) {
             e.printStackTrace();
         } return null;
@@ -144,19 +143,27 @@ public class SplittingHeapListState<K, N, V> implements InternalSplitAndMergeSta
             return;
 
 
+
+        HashMap<N,List<V>> newElementSets = new HashMap<>();
         // For each element, search the corresponding namespace, then add it to the state table
-        oldElementSet.forEach(v -> {
+        for (V v : oldElementSet) {
             Optional<N> optionalNamespace;
             optionalNamespace = splittedTargets.stream().filter(n -> matchingPredicate.test(v, n)).findFirst();
             optionalNamespace.ifPresent(n -> {
-                try {
-                    internalMergingState.setCurrentNamespace(n);
-                    internalMergingState.add(v);
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
+                newElementSets.putIfAbsent(n,new ArrayList<>());
+                newElementSets.get(n).add(v);
             });
-        });
+        }
+
+        for (N n: newElementSets.keySet()
+             ) {
+            try {
+                internalMergingState.setCurrentNamespace(n);
+                internalMergingState.addAll(newElementSets.get(n));
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
     }
 
 

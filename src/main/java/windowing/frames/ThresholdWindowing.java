@@ -22,6 +22,7 @@ import org.apache.flink.streaming.api.windowing.evictors.Evictor;
 import org.apache.flink.streaming.api.windowing.triggers.Trigger;
 import org.apache.flink.streaming.api.windowing.windows.GlobalWindow;
 import org.apache.flink.streaming.runtime.operators.windowing.TimestampedValue;
+import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 
 import java.util.*;
 import java.util.function.ToLongFunction;
@@ -79,7 +80,7 @@ public class ThresholdWindowing<I> extends FrameWindowing<I>{
     }
 
     @Override
-    protected Collection<FrameState> processOutOfOrder(long ts, long arg, FrameState rebuildingFrameState) throws Exception {
+    protected Collection<FrameState> processOutOfOrder(long ts, long arg, FrameState rebuildingFrameState, Iterable<StreamRecord<I>> iterable) throws Exception {
         //TODO : Fix this artificial solutions
         if (closePred(arg, rebuildingFrameState)){
            FrameState frameState = FrameState.initializeFrameState(rebuildingFrameState.getTsStart(), ts, true);

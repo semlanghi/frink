@@ -44,6 +44,7 @@ import java.util.function.BiFunction;
 import java.util.function.BiPredicate;
 import java.util.function.ToLongFunction;
 import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 
 public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, TimeWindow> implements SingleBufferWindowing<I, GlobalWindow> {
 
@@ -63,12 +64,11 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Time
 
 
         // TODO: Add an eviction policy for the windows
-        MapState<Long, FrameState> candidateWindowsState = ((StateAwareWindowAssignerContext)context).getPastFrameState(candidateWindowsDescriptor);
-        ValueState<FrameState> currentFrameState = ((StateAwareWindowAssignerContext) context).getCurrentFrameState(frameStateDescriptor);
+
 
         long elementLong = toLongFunctionValue.applyAsLong(element);
 
-        Iterator<CandidateTimeWindow> candidateTimeWindowIterator = processFrames(timestamp, candidateWindowsState, elementLong, currentFrameState);
+        Iterator<CandidateTimeWindow> candidateTimeWindowIterator = processFrames(timestamp, elementLong, context);
 
         List<TimeWindow> finalWindows = new ArrayList<>();
 
@@ -81,16 +81,27 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Time
 
     }
 
-    protected Iterator<CandidateTimeWindow> processFrames(long timestamp, MapState<Long, FrameState> candidateWindowsState, long elementLong, ValueState<FrameState> currentFrameState){
+    protected Iterator<CandidateTimeWindow> processFrames(long timestamp, long elementLong, WindowAssignerContext context){
         try {
+            MapState<Long, FrameState> candidateWindowsState = ((StateAwareWindowAssignerContext)context).getPastFrameState(candidateWindowsDescriptor);
+            ValueState<FrameState> currentFrameState = ((StateAwareWindowAssignerContext) context).getCurrentFrameState(frameStateDescriptor);
             FrameState frameState = currentFrameState.value();
 
             if(frameState==null)
-                frameState = FrameState.initializeFrameState(timestamp-2);
+                frameState = FrameState.initializeFrameState(-1L);
 
-            if(timestamp >= frameState.getTsStart()){
+            if(timestamp >= frameState.getTsStart() || frameState.getTsStart() == -1L){
                 // Processing on the current Frame
-                Collection<FrameState> resultingFrameStates = processFrame(timestamp, elementLong, frameState);
+
+                Collection<FrameState> resultingFrameStates;
+                if(timestamp > frameState.getTsEnd()) {
+                    // Normal Processing
+                    resultingFrameStates = processFrame(timestamp, elementLong, frameState);
+                } else {
+                    //Out-Of-Order Processing on the frame
+                    Iterable<StreamRecord<I>> iterable = ((StateAwareWindowAssignerContext<I, TimeWindow>) context).getContent(new TimeWindow(frameState.getTsStart(), frameState.getTsEnd()));
+                    resultingFrameStates = processOutOfOrder(timestamp, elementLong, frameState, iterable);
+                }
                 currentFrameState.update(frameState);
                 return getCandidateTimeWindowIterator(candidateWindowsState, resultingFrameStates);
             } else {
@@ -110,7 +121,8 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Time
                          */
 
                         FrameState frameState1 = candidateWindowsState.get(windowStart);
-                        Collection<FrameState> resultingFrameStates = processOutOfOrder(timestamp, elementLong, frameState1);
+                        Iterable<StreamRecord<I>> iterable = ((StateAwareWindowAssignerContext<I, TimeWindow>) context).getContent(new TimeWindow(frameState1.getTsStart(), frameState1.getTsEnd()));
+                        Collection<FrameState> resultingFrameStates = processOutOfOrder(timestamp, elementLong, frameState1, iterable);
                         return getCandidateTimeWindowIterator(candidateWindowsState, resultingFrameStates);
                     }
                 }
@@ -141,8 +153,7 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Time
      */
     protected Collection<FrameState> processFrame(long timestamp, long elementLong, FrameState frameState){
         try {
-            if(timestamp > frameState.getTsEnd()) {
-                // Normal Processing
+
                 Collection<FrameState> frameStateCollection = new LinkedList<>();
                 if (closePred(elementLong, frameState))
                     // I added a collection to gather the closed window, as the frameState variable is overridden
@@ -156,10 +167,7 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Time
                     frameStateCollection.add(frameState);
                 }
                 return frameStateCollection;
-            } else {
-                //Out-Of-Order Processing on the frame
-                return processOutOfOrder(timestamp, elementLong, frameState);
-            }
+
         } catch (Exception e) {
             e.printStackTrace();
         } return Collections.emptyList();
@@ -177,17 +185,61 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Time
 
     protected abstract void update(long ts, long arg, FrameState windowAssignerContext) throws Exception;
 
-    protected abstract Collection<FrameState> processOutOfOrder(long ts, long arg, FrameState rebuildingFrameState) throws Exception;
+
+    protected Collection<FrameState> processOutOfOrder(long ts, long arg, FrameState rebuildingFrameState, Iterable<StreamRecord<I>> iterable) throws Exception {
+        // Reiterate on the elements arrived before arg
+        FrameState frameStateFinal = StreamSupport.stream(iterable.spliterator(),false)
+                .filter(iStreamRecord -> iStreamRecord.getTimestamp()<=ts)
+                .reduce(FrameState.initializeFrameState(-1L),
+                        (frameState, iStreamRecord) -> {
+                            Collection<FrameState> frameStates = processFrame(iStreamRecord.getTimestamp(), toLongFunctionValue.applyAsLong(iStreamRecord.getValue()), frameState);
+                            if (frameStates.size() == 1)
+                                return frameStates.iterator().next();
+                            return null;
+                        }, (frameState, frameState2) -> {
+                            if (frameState.getTsStart()==-1)
+                                return frameState2;
+                            if (frameState2.getTsStart()==-1)
+                                return frameState;
+                            return new FrameState(frameState.getCount()+ frameState2.getCount(),
+                                    Math.min(frameState.getTsStart(), frameState2.getTsStart()),
+                                    0L, frameState.getTsStart() < frameState2.getTsStart() ? frameState.getAggregate() : frameState2.getAggregate()
+                                    , Math.max(frameState.getTsEnd(), frameState2.getTsEnd()), frameState.isClosed() || frameState2.isClosed());
+                        });
+
+        //Process arg, whether it returns a splitted result (size>1) or a single, go to the frame not yet closed
+        Collection<FrameState> withRecordFrameStates = processFrame(ts, arg, frameStateFinal);
+        Optional<FrameState> optionalNotYetClosedFrameState = withRecordFrameStates.stream().filter(frameState -> !frameState.isClosed()).findFirst();
+
+        if(optionalNotYetClosedFrameState.isPresent()){
+            // Cannot use the previous stream, this is not a reduce operation as we may end up with multiple splitted frameStates
+            FrameState notYetClosedState = optionalNotYetClosedFrameState.get();
+
+            // Filter events arrived after arg
+            Iterator<StreamRecord<I>> valuesIterator = StreamSupport.stream(iterable.spliterator(),false)
+                    .filter(iStreamRecord -> iStreamRecord.getTimestamp()>ts)
+                    .sorted(Comparator.comparingLong(StreamRecord::getTimestamp))
+                    .iterator();
+
+            // Process these events, adding new closed frames everytime there is a split
+            while (valuesIterator.hasNext()){
+                StreamRecord<I> streamRecord = valuesIterator.next();
+                Collection<FrameState> frameStates = processFrame(streamRecord.getTimestamp(), toLongFunctionValue.applyAsLong(streamRecord.getValue()), notYetClosedState);
+                withRecordFrameStates.addAll(frameStates.stream().filter(FrameState::isClosed).collect(Collectors.toList()));
+                Optional<FrameState> optionalFrameState = frameStates.stream().filter(frameState -> !frameState.isClosed()).findFirst();
+                if(optionalFrameState.isPresent())
+                    notYetClosedState = optionalFrameState.get();
+                else return withRecordFrameStates;
+            }
+        }
+
+        return withRecordFrameStates;
+    }
 
 
     @Override
     public BiFunction<Long, Long, TimeWindow> getWindowFactory() {
-        return new BiFunction<Long, Long, TimeWindow>() {
-            @Override
-            public TimeWindow apply(Long aLong, Long aLong2) {
-                return new TimeWindow(aLong, aLong2);
-            }
-        };
+        return (aLong, aLong2) -> new TimeWindow(aLong, aLong2);
     }
 
     @Override
@@ -206,7 +258,7 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Time
 
         List<TimeWindow> sortedWindows = new ArrayList<>(windows);
 
-        Collections.sort(sortedWindows, (o1, o2) -> Long.compare(o1.getStart(), o2.getStart()));
+        Collections.sort(sortedWindows, Comparator.comparingLong(TimeWindow::getStart));
 
         List<Tuple2<TimeWindow, Set<TimeWindow>>> merged = new ArrayList<>();
         Tuple2<TimeWindow, Set<TimeWindow>> currentMerge = null;
@@ -314,7 +366,9 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Time
 
             long elementLong = toLongFunctionValue.applyAsLong(element);
 
-            Iterator<CandidateTimeWindow> finalWindows = processFrames(timestamp, windowState, elementLong, currentFrameState);
+
+            //TODO: Fix required
+            Iterator<CandidateTimeWindow> finalWindows = processFrames(timestamp,elementLong, null);
 
             //Pre-filter: in case no windows is available, optimization, without going to the evictor
             if(finalWindows.hasNext()){

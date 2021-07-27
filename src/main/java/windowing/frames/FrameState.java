@@ -11,8 +11,7 @@ import java.io.Serializable;
 
 public class FrameState implements Serializable {
 
-
-    // TODO: for now, we maintain this very generic, after fixed whole OOO management, remove unnecessary fields
+    // TODO: Convert this class into a gateway class towards the State Backend, it is more efficient, you don't have to (de)serialize the whole state
     private long count;
     private long tsStart;
     private long tsEnd;
@@ -20,7 +19,7 @@ public class FrameState implements Serializable {
     private long auxiliaryValue;
     private long aggregate;
 
-    private FrameState(long count, long tsStart, long auxiliaryValue, long aggregate, long tsEnd, boolean isClosed) {
+    public FrameState(long count, long tsStart, long auxiliaryValue, long aggregate, long tsEnd, boolean isClosed) {
         this.count = count;
         this.tsStart = tsStart;
         this.auxiliaryValue = auxiliaryValue;

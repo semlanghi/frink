@@ -59,6 +59,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.function.BiFunction;
 import java.util.function.BiPredicate;
+import java.util.function.Predicate;
 
 import static org.apache.flink.util.Preconditions.checkArgument;
 import static org.apache.flink.util.Preconditions.checkNotNull;
@@ -226,7 +227,7 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
             windowState = (InternalAppendingState<K, W, StreamRecord<IN>,List<StreamRecord<IN>>, Iterable<StreamRecord<IN>>>) getOrCreateKeyedState(windowSerializer, windowStateDescriptor);
         }
 
-        this.windowAssignerContext = new StateAwareWindowAssigner.StateAwareWindowAssignerContext() {
+        this.windowAssignerContext = new StateAwareWindowAssigner.StateAwareWindowAssignerContext<IN,W>() {
             @Override
             public ValueState<FrameState> getCurrentFrameState(ValueStateDescriptor<FrameState> stateDescriptor) {
                 try {
@@ -246,8 +247,13 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
             }
 
             @Override
-            public InternalAppendingState getContent() {
-                return StateAwareMultiBufferWindowOperator.this.windowMergingState;
+            public Iterable<StreamRecord<IN>> getContent(W window) {
+                try {
+                    windowMergingState.setCurrentNamespace(getMergingWindowSet().getStateWindow(window));
+                    return StateAwareMultiBufferWindowOperator.this.windowMergingState.get();
+                } catch (Exception e) {
+                    e.printStackTrace();
+                } return null;
             }
 
             @Override
@@ -331,12 +337,15 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
                 .map(w -> ((TimeWindow)w).getEnd())
                 .max(Long::compareTo);
 
+        //TODO: Temporary solution, this is not true for TimeWindows
+        boolean OOO = elementWindows.stream().anyMatch(w -> w.maxTimestamp() > element.getTimestamp());
+
 
         if (windowAssigner instanceof MergingWindowAssigner) {
             MergingWindowSet<W> mergingWindows = getMergingWindowSet();
 
             if(minimumStart.isPresent() && maximumEnd.isPresent() &&
-                    windowMatcher != null && windowFactory != null && elementWindows.size()>1){
+                    windowMatcher != null && windowFactory != null && OOO){
                 W tmp = windowFactory.apply(minimumStart.get(), maximumEnd.get());
 
                 windowMergingState.splitNamespaces(mergingWindows.getStateWindow(tmp), elementWindows, windowMatcher);

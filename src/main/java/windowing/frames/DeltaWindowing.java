@@ -21,10 +21,16 @@ package windowing.frames;
 import org.apache.flink.streaming.api.windowing.evictors.Evictor;
 import org.apache.flink.streaming.api.windowing.windows.GlobalWindow;
 import org.apache.flink.streaming.runtime.operators.windowing.TimestampedValue;
+import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 
+import java.awt.*;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.Iterator;
-import java.util.function.ToLongFunction;
+import java.util.Optional;
+import java.util.function.*;
+import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 
 public class DeltaWindowing<I> extends FrameWindowing<I> {
 
@@ -42,12 +48,16 @@ public class DeltaWindowing<I> extends FrameWindowing<I> {
 
     @Override
     protected boolean updatePred(long element, FrameState mapState) throws Exception {
-        return Math.abs(mapState.getAuxiliaryValue()-element) > threshold;
+        if(mapState.getAuxiliaryValue()==0)
+            return false;
+        return Math.abs(mapState.getAuxiliaryValue()-element) < threshold;
     }
 
     @Override
     protected boolean closePred(long element, FrameState mapState) throws Exception {
-        return Math.abs(mapState.getAuxiliaryValue()-element) <= threshold;
+        if(mapState.getAuxiliaryValue()==0)
+            return false;
+        return Math.abs(mapState.getAuxiliaryValue()-element) >= threshold;
     }
 
     @Override
@@ -70,11 +80,6 @@ public class DeltaWindowing<I> extends FrameWindowing<I> {
         mapState.extend(ts+1);
     }
 
-    @Override
-    protected Collection<FrameState> processOutOfOrder(long ts, long arg, FrameState rebuildingFrameState) throws Exception {
-        // TODO: complete this method with the OOO processing, probably involving the content of previous elements
-        return null;
-    }
 
     @Override
     public Evictor<I, GlobalWindow> evictor() {
@@ -98,8 +103,6 @@ public class DeltaWindowing<I> extends FrameWindowing<I> {
                         itTsValues.next();
                         itTsValues.remove();
                     }
-
-
                 } catch (Exception e) {
                     e.printStackTrace();
                 }

@@ -11,6 +11,7 @@ import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import windowing.frames.FrameState;
 
 import java.io.Serializable;
+import java.util.List;
 import java.util.function.BiFunction;
 import java.util.function.BiPredicate;
 
@@ -20,12 +21,13 @@ public abstract class StateAwareWindowAssigner<T,W extends Window> extends Mergi
 
     public abstract BiPredicate<StreamRecord<T>,W> getWindowMatcher();
 
-    public abstract static class StateAwareWindowAssignerContext extends WindowAssignerContext{
+    public abstract static class StateAwareWindowAssignerContext<T, W extends Window> extends WindowAssignerContext{
 
         public abstract ValueState<FrameState> getCurrentFrameState(ValueStateDescriptor<FrameState> stateDescriptor);
 
         public abstract MapState<Long, FrameState> getPastFrameState(MapStateDescriptor<Long, FrameState> stateDescriptor);
 
-        public abstract InternalAppendingState getContent();
+        public abstract Iterable<StreamRecord<T>> getContent(W window);
+
     }
 }
