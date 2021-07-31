@@ -58,7 +58,7 @@ public class CandidateTimeWindow implements Serializable {
 
     public TimeWindow close(){
         this.closed = true;
-        return new TimeWindow(start, end);
+        return new DataDrivenWindow(start, end,  true);
     }
 
     public long getEnd() {
@@ -83,8 +83,8 @@ public class CandidateTimeWindow implements Serializable {
         }else return false;
     }
 
-    public TimeWindow getFinalWindow(){
-        return new TimeWindow(start, end);
+    public DataDrivenWindow getFinalWindow(){
+        return new DataDrivenWindow(start, end, closed);
     }
 
     public long size() {

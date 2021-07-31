@@ -52,11 +52,15 @@ public class AggregateWindowing<I> extends FrameWindowing<I> {
 
     @Override
     protected boolean updatePred(long element, FrameState mapState) throws Exception{
-        return mapState.getAggregate()<threshold;
+        if(mapState.getTsStart()==-1L)
+            return false;
+        return agg.apply(element, mapState.getAggregate())<threshold;
     }
 
     @Override
     protected boolean closePred(long element, FrameState mapState) throws Exception {
+        if(mapState.getTsStart()==-1L)
+            return false;
         return !updatePred(element,mapState);
     }
 
@@ -80,6 +84,58 @@ public class AggregateWindowing<I> extends FrameWindowing<I> {
     protected void update(long ts, long arg, FrameState mapState) throws Exception {
         mapState.extend(ts+1);
         mapState.setAggregate(agg.apply(arg, mapState.getAggregate()));
+    }
+
+    @Override
+    protected Collection<FrameState> processOutOfOrder(long ts, long arg, FrameState rebuildingFrameState, Iterable<StreamRecord<I>> iterable) throws Exception {
+        // Reiterate on the elements arrived before arg
+        FrameState frameStateFinal = StreamSupport.stream(iterable.spliterator(),false)
+                .filter(iStreamRecord -> iStreamRecord.getTimestamp()<=ts)
+                .reduce(FrameState.initializeFrameState(-1L),
+                        (frameState, iStreamRecord) -> {
+                            Collection<FrameState> frameStates = processFrame(iStreamRecord.getTimestamp(), toLongFunctionValue.applyAsLong(iStreamRecord.getValue()), frameState);
+                            //This is true since it is a reprocessing of past records belonging to the same frame
+                            if (frameStates.size() == 1)
+                                return frameStates.iterator().next();
+                            return null;
+                        }, (frameState, frameState2) -> {
+                            if (frameState.getTsStart()==-1)
+                                return frameState2;
+                            if (frameState2.getTsStart()==-1)
+                                return frameState;
+                            return new FrameState(frameState.getCount()+ frameState2.getCount(),
+                                    Math.min(frameState.getTsStart(), frameState2.getTsStart()),
+                                    0L, agg.apply(frameState.getAggregate(), frameState2.getAggregate())
+                                    , Math.max(frameState.getTsEnd(), frameState2.getTsEnd()), frameState.isClosed() || frameState2.isClosed());
+                        });
+
+        //Process arg, whether it returns a splitted result (size>1) or a single, go to the frame not yet closed
+        Collection<FrameState> withRecordFrameStates = processFrame(ts, arg, frameStateFinal);
+        Optional<FrameState> optionalNotYetClosedFrameState = withRecordFrameStates.stream().filter(frameState -> !frameState.isClosed()).findFirst();
+
+        if(optionalNotYetClosedFrameState.isPresent()){
+            // Cannot use the previous stream, this is not a reduce operation as we may end up with multiple splitted frameStates
+            FrameState notYetClosedState = optionalNotYetClosedFrameState.get();
+
+            // Filter events arrived after arg
+            Iterator<StreamRecord<I>> valuesIterator = StreamSupport.stream(iterable.spliterator(),false)
+                    .filter(iStreamRecord -> iStreamRecord.getTimestamp()>ts)
+                    .sorted(Comparator.comparingLong(StreamRecord::getTimestamp))
+                    .iterator();
+
+            // Process these events, adding new closed frames everytime there is a split
+            while (valuesIterator.hasNext()){
+                StreamRecord<I> streamRecord = valuesIterator.next();
+                Collection<FrameState> frameStates = processFrame(streamRecord.getTimestamp(), toLongFunctionValue.applyAsLong(streamRecord.getValue()), notYetClosedState);
+                withRecordFrameStates.addAll(frameStates.stream().filter(FrameState::isClosed).collect(Collectors.toList()));
+                Optional<FrameState> optionalFrameState = frameStates.stream().filter(frameState -> !frameState.isClosed()).findFirst();
+                if(optionalFrameState.isPresent())
+                    notYetClosedState = optionalFrameState.get();
+                else return withRecordFrameStates;
+            }
+        }
+
+        return withRecordFrameStates;
     }
 
 

@@ -9,6 +9,7 @@ import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import windowing.frames.AggregateWindowing;
 import windowing.frames.DeltaWindowing;
 import windowing.frames.ThresholdWindowing;
+import windowing.windows.DataDrivenWindow;
 
 import java.util.function.BiFunction;
 import java.util.function.ToLongFunction;
@@ -19,15 +20,15 @@ public class ExtendedKeyedStream<T,K> extends KeyedStream<T,K> {
         super(dataStream, keySelector);
     }
 
-    public StateAwareWindowedStream<T,K, TimeWindow> frameAggregate(BiFunction<Long,Long,Long> agg, Long startValue, long threshold, ToLongFunction<T> toLongFunction){
+    public StateAwareWindowedStream<T,K, DataDrivenWindow> frameAggregate(BiFunction<Long,Long,Long> agg, Long startValue, long threshold, ToLongFunction<T> toLongFunction){
         return new StateAwareWindowedStream<>(this, new AggregateWindowing<>(agg, startValue, threshold, toLongFunction));
     }
 
-    public StateAwareWindowedStream<T,K, TimeWindow> frameThreshold(long threshold, ToLongFunction<T> toLongFunction){
+    public StateAwareWindowedStream<T,K, DataDrivenWindow> frameThreshold(long threshold, ToLongFunction<T> toLongFunction){
         return new StateAwareWindowedStream<>(this, new ThresholdWindowing<>(threshold, toLongFunction));
     }
 
-    public StateAwareWindowedStream<T,K, TimeWindow> frameDelta(long threshold, ToLongFunction<T> toLongFunction){
+    public StateAwareWindowedStream<T,K, DataDrivenWindow> frameDelta(long threshold, ToLongFunction<T> toLongFunction){
         return new StateAwareWindowedStream<>(this, new DeltaWindowing<>(threshold, toLongFunction));
     }
 

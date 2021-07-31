@@ -52,14 +52,17 @@ import org.apache.flink.streaming.runtime.operators.windowing.functions.Internal
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.util.OutputTag;
 import windowing.frames.FrameState;
+import windowing.frames.FrameWindowing;
+import windowing.windows.DataDrivenWindow;
 
 import java.io.Serializable;
-import java.util.Collection;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 import java.util.function.BiFunction;
 import java.util.function.BiPredicate;
+import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 
 import static org.apache.flink.util.Preconditions.checkArgument;
 import static org.apache.flink.util.Preconditions.checkNotNull;
@@ -249,7 +252,8 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
             @Override
             public Iterable<StreamRecord<IN>> getContent(W window) {
                 try {
-                    windowMergingState.setCurrentNamespace(getMergingWindowSet().getStateWindow(window));
+                    W stateWindow = getMergingWindowSet().getStateWindow(window);
+                    windowMergingState.setCurrentNamespace(stateWindow);
                     return StateAwareMultiBufferWindowOperator.this.windowMergingState.get();
                 } catch (Exception e) {
                     e.printStackTrace();
@@ -327,31 +331,26 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
 
         final K key = this.<K>getKeyedStateBackend().getCurrentKey();
 
-        Optional<Long> minimumStart = elementWindows.stream()
-                .filter(w -> w instanceof TimeWindow)
-                .map(w -> ((TimeWindow)w).getStart())
-                .min(Long::compareTo);
-
-        Optional<Long> maximumEnd = elementWindows.stream()
-                .filter(w -> w instanceof TimeWindow)
-                .map(w -> ((TimeWindow)w).getEnd())
-                .max(Long::compareTo);
-
-        //TODO: Temporary solution, this is not true for TimeWindows
-        boolean OOO = elementWindows.stream().anyMatch(w -> w.maxTimestamp() > element.getTimestamp());
+        Collection<W> recomputedWindows = elementWindows;
+        MergingWindowSet<W> mergingWindows = getMergingWindowSet();
 
 
         if (windowAssigner instanceof MergingWindowAssigner) {
-            MergingWindowSet<W> mergingWindows = getMergingWindowSet();
-
-            if(minimumStart.isPresent() && maximumEnd.isPresent() &&
-                    windowMatcher != null && windowFactory != null && OOO){
-                W tmp = windowFactory.apply(minimumStart.get(), maximumEnd.get());
-
-                windowMergingState.splitNamespaces(mergingWindows.getStateWindow(tmp), elementWindows, windowMatcher);
-                mergingWindows.retireWindow(tmp);
+            if(recomputedWindows.stream().anyMatch(w -> w.maxTimestamp() > element.getTimestamp()))
+                while (recomputedWindows.stream()
+                           .anyMatch(w -> !(w instanceof DataDrivenWindow) || ((DataDrivenWindow) w).isClosed()) ) {
+                    recomputedWindows = outOfOrderProcess(key, recomputedWindows, mergingWindows);
+                    if(elementWindows!=recomputedWindows)
+                        elementWindows.addAll(recomputedWindows.stream()
+                                .filter(w -> !(w instanceof DataDrivenWindow) || ((DataDrivenWindow) w).isClosed())
+                                .collect(Collectors.toList()));
             }
+        }
 
+
+
+
+        if (windowAssigner instanceof MergingWindowAssigner) {
 
             for (W window: elementWindows) {
 
@@ -486,6 +485,82 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
                 this.numLateRecordsDropped.inc();
             }
         }
+    }
+
+    private Collection<W> outOfOrderProcess(K key, Collection<W> recomputedWindows, MergingWindowSet<W> mergingWindows) throws Exception {
+        Optional<Long> minimumStart = recomputedWindows.stream()
+                .filter(w -> w instanceof TimeWindow)
+                .map(w -> ((TimeWindow) w).getStart())
+                .min(Long::compareTo);
+
+        Optional<Long> maximumEnd = recomputedWindows.stream()
+                .filter(w -> w instanceof TimeWindow)
+                .map(w -> ((TimeWindow) w).getEnd())
+                .max(Long::compareTo);
+
+        if (minimumStart.isPresent() && maximumEnd.isPresent() &&
+                windowMatcher != null && windowFactory != null) {
+            W tmp = windowFactory.apply(minimumStart.get(), maximumEnd.get());
+
+
+            W notYetClosedWindow = splitAndMerge(tmp, recomputedWindows, key, mergingWindows);
+
+            windowMergingState.setCurrentNamespace(mergingWindows.getStateWindow(notYetClosedWindow));
+            StreamRecord<IN> recomputingElement = windowMergingState.get().iterator().next();
+
+            recomputedWindows = windowAssigner.assignWindows(recomputingElement.getValue(), recomputingElement.getTimestamp(), windowAssignerContext);
+        }
+        return recomputedWindows;
+    }
+
+    private W splitAndMerge(W windowToSplit, Collection<W> elementWindows, K key, MergingWindowSet<W> mergingWindows) throws Exception {
+        W originalWindowToSplit = mergingWindows.getStateWindow(windowToSplit);
+
+        windowMergingState.splitNamespaces(originalWindowToSplit, elementWindows, windowMatcher);
+        mergingWindows.retireWindow(windowToSplit);
+
+        Optional<W> notYetClosedWindow = elementWindows.stream()
+                .filter(w -> !((DataDrivenWindow)w).isClosed())
+                .findFirst();
+        return mergingWindows.addWindow(notYetClosedWindow.get(), new MergingWindowSet.MergeFunction<W>() {
+            @Override
+            public void merge(W mergeResult,
+                              Collection<W> mergedWindows, W stateWindowResult,
+                              Collection<W> mergedStateWindows) throws Exception {
+
+                if ((windowAssigner.isEventTime() && mergeResult.maxTimestamp() + allowedLateness <= internalTimerService.currentWatermark())) {
+                    throw new UnsupportedOperationException("The end timestamp of an " +
+                            "event-time window cannot become earlier than the current watermark " +
+                            "by merging. Current watermark: " + internalTimerService.currentWatermark() +
+                            " window: " + mergeResult);
+                } else if (!windowAssigner.isEventTime() && mergeResult.maxTimestamp() <= internalTimerService.currentProcessingTime()) {
+                    throw new UnsupportedOperationException("The end timestamp of a " +
+                            "processing-time window cannot become earlier than the current processing time " +
+                            "by merging. Current processing time: " + internalTimerService.currentProcessingTime() +
+                            " window: " + mergeResult);
+                }
+
+                triggerContext.key = key;
+                triggerContext.window = mergeResult;
+
+                triggerContext.onMerge(mergedWindows);
+
+
+                for (W m: mergedWindows) {
+                    triggerContext.window = m;
+                    triggerContext.clear();
+                    deleteCleanupTimer(m);
+                }
+
+                if(windowAssigner instanceof FrameWindowing){
+                    ((FrameWindowing<? super IN>) windowAssigner).mergeFrames((Collection<? extends TimeWindow>) mergedWindows, windowAssignerContext);
+                }
+
+
+                // merge the merged state windows into the newly resulting state window
+                windowMergingState.mergeNamespaces(stateWindowResult, mergedStateWindows);
+            }
+        });
     }
 
     @Override

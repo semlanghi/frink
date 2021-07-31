@@ -29,18 +29,18 @@ public class FrameState implements Serializable {
     }
 
     public static FrameState initializeFrameState(long tsStart){
-        return new FrameState(0L, tsStart, 0L, 0L, tsStart+1, false);
+        return new FrameState(0L, tsStart, 0L, -1L, tsStart+1, false);
     }
 
     public static FrameState initializeFrameState(long tsStart, long tsEnd, boolean isClosed){
-        return new FrameState(0L, tsStart, 0L, 0L, tsEnd, isClosed);
+        return new FrameState(0L, tsStart, 0L, -1L, tsEnd, isClosed);
     }
 
     public void resetFrameState(){
         this.count = 0L;
         this.tsStart = -1L;
         this.auxiliaryValue = 0L;
-        this.aggregate = 0L;
+        this.aggregate = -1L;
         this.tsEnd = 1;
         this.isClosed = false;
     }

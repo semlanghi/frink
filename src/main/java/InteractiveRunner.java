@@ -71,11 +71,11 @@ public class InteractiveRunner {
                         TypeInformation.of(SpeedEvent.class));
             else if(JOB_TYPE.endsWith("delta"))
                 speedEventDataStreamSink = extendedKeyedStream.frameDelta(50, (ToLongFunction<SpeedEvent> & Serializable) value -> (long) value.getValue()).reduce(
-                        (ReduceFunction<SpeedEvent>) (value1, value2) -> value1.getValue() > value2.getValue() ? value1 : value2,
+                        (ReduceFunction<SpeedEvent>) (value1, value2) -> new SpeedEvent(value1.getKey(), Math.max(value1.getTimestamp(), value2.getTimestamp()), value1.getValue() + value2.getValue()),
                         new PassThroughWindowFunction<>(),
                         TypeInformation.of(SpeedEvent.class));
             else if(JOB_TYPE.endsWith("aggregate"))
-                speedEventDataStreamSink = extendedKeyedStream.frameAggregate((BiFunction<Long, Long, Long> & Serializable) Long::sum, 0L, 50, (ToLongFunction<SpeedEvent> & Serializable) value -> (long) value.getValue()).reduce(
+                speedEventDataStreamSink = extendedKeyedStream.frameAggregate((BiFunction<Long, Long, Long> & Serializable) Long::sum, 0L, 150, (ToLongFunction<SpeedEvent> & Serializable) value -> (long) value.getValue()).reduce(
                         (ReduceFunction<SpeedEvent>) (value1, value2) -> value1.getValue() > value2.getValue() ? value1 : value2,
                         new PassThroughWindowFunction<>(),
                         TypeInformation.of(SpeedEvent.class));
@@ -120,12 +120,16 @@ public class InteractiveRunner {
                 ctx.collectWithTimestamp(new SpeedEvent("1", 1000, 55),1000);
                 ctx.collectWithTimestamp(new SpeedEvent("1", 4000, 56),4000);
                 ctx.collectWithTimestamp(new SpeedEvent("1", 7000, 57),7000);
-                ctx.collectWithTimestamp(new SpeedEvent("1", 8000, 58),8000);
-                ctx.collectWithTimestamp(new SpeedEvent("1", 10000, 60),10000);
-                ctx.collectWithTimestamp(new SpeedEvent("1", 11000, 20),11000);
-                ctx.collectWithTimestamp(new SpeedEvent("1", 12000, 60),12000);
-                ctx.collectWithTimestamp(new SpeedEvent("1", 5000, 20),5000);
-                ctx.collectWithTimestamp(new SpeedEvent("1", 9000, 20),9000);
+                ctx.collectWithTimestamp(new SpeedEvent("1", 8000, 130),8000);
+                ctx.collectWithTimestamp(new SpeedEvent("1", 10000, 120),10000);
+                ctx.collectWithTimestamp(new SpeedEvent("1", 11000, 120),11000);
+                ctx.collectWithTimestamp(new SpeedEvent("1", 12000, 50),12000);
+                ctx.collectWithTimestamp(new SpeedEvent("1", 13000, 60),13000);
+                ctx.collectWithTimestamp(new SpeedEvent("1", 14000, 60),14000);
+                ctx.collectWithTimestamp(new SpeedEvent("1", 15000, 130),15000);
+
+                ctx.collectWithTimestamp(new SpeedEvent("1", 5000, 130),5000);
+                ctx.collectWithTimestamp(new SpeedEvent("1", 9000, 50),9000);
             }
         }
 

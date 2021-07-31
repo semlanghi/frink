@@ -80,6 +80,63 @@ public class DeltaWindowing<I> extends FrameWindowing<I> {
         mapState.extend(ts+1);
     }
 
+    @Override
+    protected Collection<FrameState> processOutOfOrder(long ts, long arg, FrameState rebuildingFrameState, Iterable<StreamRecord<I>> iterable) throws Exception {
+        // Reiterate on the elements arrived before arg
+        FrameState frameStateFinal = StreamSupport.stream(iterable.spliterator(),false)
+                .filter(iStreamRecord -> iStreamRecord.getTimestamp()<=ts)
+                .reduce(FrameState.initializeFrameState(-1L),
+                        (frameState, iStreamRecord) -> {
+                            Collection<FrameState> frameStates = processFrame(iStreamRecord.getTimestamp(), toLongFunctionValue.applyAsLong(iStreamRecord.getValue()), frameState);
+                            if (frameStates.size() == 1)
+                                return frameStates.iterator().next();
+                            return null;
+                        }, (frameState, frameState2) -> {
+                            if (frameState.getTsStart()==-1)
+                                return frameState2;
+                            if (frameState2.getTsStart()==-1)
+                                return frameState;
+                            return new FrameState(frameState.getCount()+ frameState2.getCount(),
+                                    Math.min(frameState.getTsStart(), frameState2.getTsStart()),
+                                    frameState.getTsStart() < frameState2.getTsStart() ? frameState.getAuxiliaryValue() : frameState2.getAuxiliaryValue(), 0L
+                                    , Math.max(frameState.getTsEnd(), frameState2.getTsEnd()), frameState.isClosed() || frameState2.isClosed());
+                        });
+
+        //Process arg, whether it returns a splitted result (size>1) or a single, go to the frame not yet closed
+        Collection<FrameState> withRecordFrameStates = processFrame(ts, arg, frameStateFinal);
+        Optional<FrameState> optionalNotYetClosedFrameState = withRecordFrameStates.stream().filter(frameState -> !frameState.isClosed()).findFirst();
+
+        if(optionalNotYetClosedFrameState.isPresent()){
+            // Cannot use the previous stream, this is not a reduce operation as we may end up with multiple splitted frameStates
+            FrameState notYetClosedState = optionalNotYetClosedFrameState.get();
+
+            // Filter events arrived after arg
+            Iterator<StreamRecord<I>> valuesIterator = StreamSupport.stream(iterable.spliterator(),false)
+                    .filter(iStreamRecord -> iStreamRecord.getTimestamp()>ts)
+                    .sorted(Comparator.comparingLong(StreamRecord::getTimestamp))
+                    .iterator();
+
+            // Process these events, adding new closed frames everytime there is a split
+            while (valuesIterator.hasNext()){
+                StreamRecord<I> streamRecord = valuesIterator.next();
+                Collection<FrameState> frameStates = processFrame(streamRecord.getTimestamp(), toLongFunctionValue.applyAsLong(streamRecord.getValue()), notYetClosedState);
+                withRecordFrameStates.addAll(frameStates.stream().filter(FrameState::isClosed).collect(Collectors.toList()));
+                Optional<FrameState> optionalFrameState = frameStates.stream().filter(frameState -> !frameState.isClosed()).findFirst();
+                if(optionalFrameState.isPresent())
+                    notYetClosedState = optionalFrameState.get();
+                else{
+                    //TODO: Close the gap on last splitted frame with respect to the original one
+                    return withRecordFrameStates;
+                }
+            }
+        }
+
+        Optional<FrameState> lastFrameState = withRecordFrameStates.stream().max(Comparator.comparingLong(FrameState::getTsEnd));
+        if(lastFrameState.isPresent())
+            lastFrameState.get().extend(rebuildingFrameState.getTsEnd());
+        return withRecordFrameStates;
+    }
+
 
     @Override
     public Evictor<I, GlobalWindow> evictor() {
