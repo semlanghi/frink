@@ -4,6 +4,7 @@ import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
 import org.apache.flink.streaming.api.windowing.assigners.GlobalWindows;
+import org.apache.flink.streaming.api.windowing.assigners.WindowAssigner;
 import org.apache.flink.streaming.api.windowing.windows.GlobalWindow;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import windowing.frames.AggregateWindowing;
@@ -34,22 +35,22 @@ public class ExtendedKeyedStream<T,K> extends KeyedStream<T,K> {
 
     public StateAwareWindowedStream<T,K, GlobalWindow> frameThresholdSingle(long threshold, ToLongFunction<T> toLongFunction){
         SingleBufferWindowing<T, GlobalWindow> singleBufferWindowing = new ThresholdWindowing<>(threshold, toLongFunction);
-        return new StateAwareWindowedStream<>(this, GlobalWindows.create())
-                .evictor(singleBufferWindowing.evictor())
+        return new StateAwareWindowedStream<>(this, (WindowAssigner<T, GlobalWindow>) GlobalWindows.create())
+                .evictor(singleBufferWindowing.singleBufferEvictor())
                 .trigger(singleBufferWindowing.singleBufferTrigger());
     }
 
     public StateAwareWindowedStream<T,K, GlobalWindow> frameDeltaSingle(long threshold, ToLongFunction<T> toLongFunction){
         SingleBufferWindowing<T, GlobalWindow> singleBufferWindowing = new DeltaWindowing<>(threshold, toLongFunction);
-        return new StateAwareWindowedStream<>(this, GlobalWindows.create())
-                .evictor(singleBufferWindowing.evictor())
+        return new StateAwareWindowedStream<>(this, (WindowAssigner<T, GlobalWindow>) GlobalWindows.create())
+                .evictor(singleBufferWindowing.singleBufferEvictor())
                 .trigger(singleBufferWindowing.singleBufferTrigger());
     }
 
     public StateAwareWindowedStream<T,K, GlobalWindow> frameAggregateSingle(BiFunction<Long,Long,Long> agg, Long startValue, long threshold, ToLongFunction<T> toLongFunction){
         SingleBufferWindowing<T, GlobalWindow> singleBufferWindowing = new AggregateWindowing<>(agg, startValue, threshold, toLongFunction);
-        return new StateAwareWindowedStream<>(this, GlobalWindows.create())
-                .evictor(singleBufferWindowing.evictor())
+        return new StateAwareWindowedStream<>(this, (WindowAssigner<T, GlobalWindow>) GlobalWindows.create())
+                .evictor(singleBufferWindowing.singleBufferEvictor())
                 .trigger(singleBufferWindowing.singleBufferTrigger());
     }
 

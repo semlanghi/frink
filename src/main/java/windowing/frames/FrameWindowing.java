@@ -29,22 +29,20 @@ import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.api.common.typeutils.base.LongSerializer;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.windowing.assigners.MergingWindowAssigner;
+import org.apache.flink.streaming.api.windowing.assigners.WindowAssigner;
 import org.apache.flink.streaming.api.windowing.evictors.Evictor;
 import org.apache.flink.streaming.api.windowing.triggers.Trigger;
 import org.apache.flink.streaming.api.windowing.triggers.TriggerResult;
 import org.apache.flink.streaming.api.windowing.windows.GlobalWindow;
-import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
-import org.apache.flink.streaming.api.windowing.windows.Window;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
-import windowing.SingleBufferWindowing;
-import windowing.StateAwareWindowAssigner;
+import windowing.*;
 import windowing.windows.CandidateTimeWindow;
 import windowing.windows.DataDrivenWindow;
 
 import java.util.*;
 import java.util.function.*;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
 public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, DataDrivenWindow> implements SingleBufferWindowing<I, GlobalWindow> {
@@ -65,15 +63,21 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
     }
 
     @Override
-    public Collection<DataDrivenWindow> assignWindows(I element, long timestamp, WindowAssignerContext context) {
+    public Collection<DataDrivenWindow> assignWindows(I element, long timestamp, WindowAssigner.WindowAssignerContext context) {
 
 
         // TODO: Add an eviction policy for the windows
+        Iterator<CandidateTimeWindow> candidateTimeWindowIterator;
 
+        if(element == null){
+            // this is the case where we are recomputing
+            candidateTimeWindowIterator= processFrames(timestamp, -1, context);
+        }else{
+            long elementLong = toLongFunctionValue.applyAsLong(element);
 
-        long elementLong = toLongFunctionValue.applyAsLong(element);
+            candidateTimeWindowIterator = processFrames(timestamp, elementLong, context);
+        }
 
-        Iterator<CandidateTimeWindow> candidateTimeWindowIterator = processFrames(timestamp, elementLong, context);
 
         List<DataDrivenWindow> finalWindows = new ArrayList<>();
 
@@ -109,7 +113,9 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
                     Iterable<StreamRecord<I>> iterable = ((StateAwareWindowAssignerContext<I, DataDrivenWindow>) context).getContent(new DataDrivenWindow(frameState.getTsStart(), frameState.getTsEnd(), false));
                     resultingFrameStates = processOutOfOrder(timestamp, elementLong, frameState, iterable);
                 }
-                currentFrameState.update(frameState);
+                if(resultingFrameStates.size()>1)
+                    currentFrameState.update(resultingFrameStates.stream().max(Comparator.comparingLong(FrameState::getTsEnd)).get());
+                else currentFrameState.update(frameState);
                 return getCandidateTimeWindowIterator(candidateWindowsState, resultingFrameStates);
             } else {
                 // Out-Of-Order Processing on a Previous Frame
@@ -118,7 +124,7 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
                 for (Iterator<Long> it = candidateWindowsState.keys().iterator(); it.hasNext();){
                     Long windowStart = it.next();
                     // Locate the right Frame instance
-                    if(timestamp>=windowStart && timestamp<candidateWindowsState.get(windowStart).getTsEnd() && candidateWindowsState.get(windowStart).isClosed()){
+                    if(timestamp>=windowStart && timestamp<candidateWindowsState.get(windowStart).getTsEnd()){
                         /*
                         If the size of the collection is equal to one, only the located frameState has been modified, i.e., no side effects
                         Else, a recomputation of the frame has been done, i.e., a split
@@ -198,7 +204,7 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
 
     @Override
     public BiFunction<Long, Long, DataDrivenWindow> getWindowFactory() {
-        return (aLong, aLong2) -> new DataDrivenWindow(aLong, aLong2, true);
+        return (i, i2) -> new DataDrivenWindow(i, i2, true);
     }
 
     @Override
@@ -212,12 +218,13 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
     }
 
     @Override
-    public void mergeWindows(Collection<DataDrivenWindow> windows, MergeCallback<DataDrivenWindow> callback) {
+    public void mergeWindows(Collection<DataDrivenWindow> windows, MergingWindowAssigner.MergeCallback<DataDrivenWindow> callback) {
         // sort the windows by the start time and then merge overlapping windows
 
         List<DataDrivenWindow> sortedWindows = new ArrayList<>(windows);
 
         Collections.sort(sortedWindows, Comparator.comparingLong(DataDrivenWindow::getStart));
+
 
         List<Tuple2<DataDrivenWindow, Set<DataDrivenWindow>>> merged = new ArrayList<>();
         Tuple2<DataDrivenWindow, Set<DataDrivenWindow>> currentMerge = null;
@@ -231,9 +238,9 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
             } else if (intersects(currentMerge.f0, candidate)) {
                 currentMerge.f0 = currentMerge.f0.cover(candidate);
                 currentMerge.f1.add(candidate);
-
-            } else if (isRecomputing(currentMerge.f0, candidate)){
-                currentMerge.f0 = currentMerge.f0.cover(candidate);
+            }else if (currentMerge.f0.isRecomputing() && meet(currentMerge.f0, candidate)) {
+                currentMerge.f0.setRecomputing(false);
+                currentMerge.f0 = currentMerge.f0.recomputingCover(candidate);
                 currentMerge.f1.add(candidate);
             } else {
                 merged.add(currentMerge);
@@ -253,30 +260,38 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
                 callback.merge(m.f1, m.f0);
             }
         }
+
+
+
     }
 
 
-    public void mergeFrames(Collection<? extends TimeWindow> mergedWindows, WindowAssignerContext windowAssignerContext) {
+    public void mergeFrames(DataDrivenWindow insertedWindow, WindowAssigner.WindowAssignerContext windowAssignerContext) {
         try {
             MapState<Long, FrameState> candidateWindowsState = ((StateAwareWindowAssignerContext)windowAssignerContext).getPastFrameState(candidateWindowsDescriptor);
+            ValueState<FrameState> currentFrameState = ((StateAwareWindowAssignerContext) windowAssignerContext).getCurrentFrameState(frameStateDescriptor);
             List<Long> toRemove = new ArrayList<>();
 
-            for (TimeWindow w : mergedWindows
-                 ) {
-                FrameState frameState = candidateWindowsState.get(w.getStart());
-                frameState.extend(w.getEnd());
+            // The 0L should be the startValue of aggregateWindowing
+            FrameState coveringFrameState = FrameState.initializeFrameState(insertedWindow.getStart(), insertedWindow.getEnd(), insertedWindow.isClosed(), 0L);
 
-                StreamSupport.stream(candidateWindowsState.keys().spliterator(), false)
-                        .filter(aLong -> {
-                            try {
-                                return candidateWindowsState.get(aLong).getTsEnd() <= frameState.getTsEnd() && aLong > frameState.getTsStart();
-                            } catch (Exception e) {
-                                e.printStackTrace();
-                            }
-                            return false;
-                        })
-                        .forEach(aLong -> toRemove.add(aLong));
-            }
+
+            //TODO: Specialize this method across all classes
+            StreamSupport.stream(candidateWindowsState.entries().spliterator(), false)
+                    .filter(longFrameStateEntry -> longFrameStateEntry.getValue().getTsStart() >= coveringFrameState.getTsStart() && longFrameStateEntry.getValue().getTsEnd() <= coveringFrameState.getTsEnd())
+                    .forEach(w -> {
+                        try {
+                            FrameState tmp = candidateWindowsState.get(w.getValue().getTsStart());
+                            //this must use the aggregate function of AggregateWindowing
+                            coveringFrameState.setAggregate(coveringFrameState.getAggregate()+ tmp.getAggregate());
+                            toRemove.add(w.getValue().getTsStart());
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        }
+                    });
+
+
+
             toRemove.stream().forEach(aLong -> {
                 try {
                     candidateWindowsState.remove(aLong);
@@ -284,6 +299,17 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
                     e.printStackTrace();
                 }
             });
+
+            if(currentFrameState.value().getTsStart() >= coveringFrameState.getTsStart() && currentFrameState.value().getTsEnd() <= coveringFrameState.getTsEnd()){
+                FrameState tmp = currentFrameState.value();
+                coveringFrameState.setAggregate(coveringFrameState.getAggregate()+ tmp.getAggregate());
+                currentFrameState.update(coveringFrameState);
+            }else{
+                candidateWindowsState.put(coveringFrameState.getTsStart(), coveringFrameState);
+            }
+
+
+
 
         } catch (Exception e) {
             e.printStackTrace();
@@ -294,8 +320,8 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
         return w1.getStart() <= w2.maxTimestamp() && w1.maxTimestamp() >= w2.getStart();
     }
 
-    private boolean isRecomputing(DataDrivenWindow w1, DataDrivenWindow w2){
-        if(w1.getEnd()==w2.getStart() && !w1.isClosed())
+    private boolean meet(DataDrivenWindow w1, DataDrivenWindow w2){
+        if(w1.getEnd()==w2.getStart())
             return true;
         else return false;
     }
@@ -306,7 +332,7 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
     }
 
     @Override
-    public abstract Evictor<I, GlobalWindow> evictor();
+    public abstract Evictor<I, GlobalWindow> singleBufferEvictor();
 
     @Override
     public Trigger<I, GlobalWindow> singleBufferTrigger(){
@@ -350,7 +376,7 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
 
     protected class FrameTrigger extends Trigger<I, GlobalWindow> {
 
-        //TODO: Add nested trigger for SECRET reporting variations
+        //TODO: Add nested singleBufferTrigger for SECRET reporting variations
 
         public FrameTrigger() {
         }
@@ -372,7 +398,7 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
             //TODO: Fix required
             Iterator<CandidateTimeWindow> finalWindows = processFrames(timestamp,elementLong, null);
 
-            //Pre-filter: in case no windows is available, optimization, without going to the evictor
+            //Pre-filter: in case no windows is available, optimization, without going to the singleBufferEvictor
             if(finalWindows.hasNext()){
                 context = ctx;
                 return TriggerResult.FIRE;

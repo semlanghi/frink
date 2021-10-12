@@ -13,18 +13,39 @@ import java.util.Objects;
 public class DataDrivenWindow extends TimeWindow {
 
     private boolean isClosed;
+    private boolean isRecomputing = false;
 
     public DataDrivenWindow(long start, long end, boolean isClosed) {
         super(start, end);
         this.isClosed = isClosed;
     }
 
+    public DataDrivenWindow extendBy(long increment){
+        return new DataDrivenWindow(this.getStart(), this.getEnd()+increment, isClosed);
+    }
+
     public boolean isClosed() {
         return isClosed;
     }
 
+    public void setClosed(boolean closed) {
+        isClosed = closed;
+    }
+
     public DataDrivenWindow cover(DataDrivenWindow other) {
         return new DataDrivenWindow(Math.min(this.getStart(), other.getStart()), Math.max(this.getEnd(), other.getEnd()), isClosed || other.isClosed);
+    }
+
+    public DataDrivenWindow recomputingCover(DataDrivenWindow other) {
+        return new DataDrivenWindow(Math.min(this.getStart(), other.getStart()), Math.max(this.getEnd(), other.getEnd()), false);
+    }
+
+    public boolean isRecomputing() {
+        return isRecomputing;
+    }
+
+    public void setRecomputing(boolean recomputing) {
+        isRecomputing = recomputing;
     }
 
     @Override

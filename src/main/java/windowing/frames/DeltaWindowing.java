@@ -24,10 +24,7 @@ import org.apache.flink.streaming.runtime.operators.windowing.TimestampedValue;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 
 import java.awt.*;
-import java.util.Collection;
-import java.util.Comparator;
-import java.util.Iterator;
-import java.util.Optional;
+import java.util.*;
 import java.util.function.*;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
@@ -103,7 +100,14 @@ public class DeltaWindowing<I> extends FrameWindowing<I> {
                         });
 
         //Process arg, whether it returns a splitted result (size>1) or a single, go to the frame not yet closed
-        Collection<FrameState> withRecordFrameStates = processFrame(ts, arg, frameStateFinal);
+        Collection<FrameState> withRecordFrameStates = null;
+        //This is done only if we are not recomputing
+        if(arg!=-1)
+            withRecordFrameStates = processFrame(ts, arg, frameStateFinal);
+        else {
+            withRecordFrameStates = new ArrayList<>();
+            withRecordFrameStates.add(frameStateFinal);
+        }
         Optional<FrameState> optionalNotYetClosedFrameState = withRecordFrameStates.stream().filter(frameState -> !frameState.isClosed()).findFirst();
 
         if(optionalNotYetClosedFrameState.isPresent()){
@@ -111,7 +115,7 @@ public class DeltaWindowing<I> extends FrameWindowing<I> {
             FrameState notYetClosedState = optionalNotYetClosedFrameState.get();
 
             // Filter events arrived after arg
-            Iterator<StreamRecord<I>> valuesIterator = StreamSupport.stream(iterable.spliterator(),false)
+            Iterator<StreamRecord<I>> valuesIterator = iterable == null ? Collections.emptyIterator() : StreamSupport.stream(iterable.spliterator(),false)
                     .filter(iStreamRecord -> iStreamRecord.getTimestamp()>ts)
                     .sorted(Comparator.comparingLong(StreamRecord::getTimestamp))
                     .iterator();
@@ -125,21 +129,24 @@ public class DeltaWindowing<I> extends FrameWindowing<I> {
                 if(optionalFrameState.isPresent())
                     notYetClosedState = optionalFrameState.get();
                 else{
-                    //TODO: Close the gap on last splitted frame with respect to the original one
+                    Optional<FrameState> lastSplittedWindow = withRecordFrameStates.stream().max(Comparator.comparingLong(FrameState::getTsEnd));
+                    lastSplittedWindow.ifPresent(frameState -> frameState.extend(rebuildingFrameState.getTsEnd()));
+                    Optional<FrameState> firstSplittedWindow = withRecordFrameStates.stream().min(Comparator.comparingLong(FrameState::getTsStart));
+                    firstSplittedWindow.ifPresent(frameState -> frameState.setTsStart(rebuildingFrameState.getTsStart()));
                     return withRecordFrameStates;
                 }
             }
         }
-
-        Optional<FrameState> lastFrameState = withRecordFrameStates.stream().max(Comparator.comparingLong(FrameState::getTsEnd));
-        if(lastFrameState.isPresent())
-            lastFrameState.get().extend(rebuildingFrameState.getTsEnd());
+        Optional<FrameState> lastSplittedWindow = withRecordFrameStates.stream().max(Comparator.comparingLong(FrameState::getTsEnd));
+        lastSplittedWindow.ifPresent(frameState -> frameState.extend(rebuildingFrameState.getTsEnd()));
+        Optional<FrameState> firstSplittedWindow = withRecordFrameStates.stream().min(Comparator.comparingLong(FrameState::getTsStart));
+        firstSplittedWindow.ifPresent(frameState -> frameState.setStartPossibleInconsistent(rebuildingFrameState.getTsStart()));
         return withRecordFrameStates;
     }
 
 
     @Override
-    public Evictor<I, GlobalWindow> evictor() {
+    public Evictor<I, GlobalWindow> singleBufferEvictor() {
         return new Evictor<I,GlobalWindow>() {
             @Override
             public void evictBefore(

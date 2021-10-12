@@ -7,6 +7,8 @@ import org.apache.flink.runtime.state.internal.InternalMergingState;
 
 import java.util.*;
 import java.util.function.BiPredicate;
+import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 public class SplittingHeapListState<K, N, V> implements InternalSplitAndMergeState<K, N, V, List<V>, Iterable<V>> {
 
@@ -130,39 +132,29 @@ public class SplittingHeapListState<K, N, V> implements InternalSplitAndMergeSta
     public void splitNamespaces(N target, Collection<N> splittedTargets, BiPredicate<V, N> matchingPredicate){
 
         // Take and remove the old window metadata
-        List<V> oldElementSet = null;
         try {
             internalMergingState.setCurrentNamespace(target);
-            oldElementSet = internalMergingState.getInternal();
+            final List<V> oldElementSet = internalMergingState.getInternal();
+
+            internalMergingState.clear();
+
+            // If not element set is found the windows are new, so do nothing
+            if(oldElementSet == null)
+                return;
+
+            // For all the namespaces, search the corresponding elements, then add it to the state table
+            splittedTargets.stream().forEach(n -> {
+                try {
+                    internalMergingState.setCurrentNamespace(n);
+                    internalMergingState.addAll(oldElementSet.stream()
+                            .filter(v -> matchingPredicate.test(v, n))
+                            .collect(Collectors.toList()));
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            });
         } catch (Exception e) {
             e.printStackTrace();
-        }
-
-        // If not element set is found the windows are new, so do nothing
-        if(oldElementSet == null)
-            return;
-
-
-
-        HashMap<N,List<V>> newElementSets = new HashMap<>();
-        // For each element, search the corresponding namespace, then add it to the state table
-        for (V v : oldElementSet) {
-            Optional<N> optionalNamespace;
-            optionalNamespace = splittedTargets.stream().filter(n -> matchingPredicate.test(v, n)).findFirst();
-            optionalNamespace.ifPresent(n -> {
-                newElementSets.putIfAbsent(n,new ArrayList<>());
-                newElementSets.get(n).add(v);
-            });
-        }
-
-        for (N n: newElementSets.keySet()
-             ) {
-            try {
-                internalMergingState.setCurrentNamespace(n);
-                internalMergingState.addAll(newElementSets.get(n));
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
         }
     }
 

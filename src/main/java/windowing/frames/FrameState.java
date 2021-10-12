@@ -32,8 +32,16 @@ public class FrameState implements Serializable {
         return new FrameState(0L, tsStart, 0L, -1L, tsStart+1, false);
     }
 
+    public static FrameState initializeFrameState(long tsStart, long aggregate){
+        return new FrameState(0L, tsStart, 0L, aggregate, tsStart+1, false);
+    }
+
     public static FrameState initializeFrameState(long tsStart, long tsEnd, boolean isClosed){
         return new FrameState(0L, tsStart, 0L, -1L, tsEnd, isClosed);
+    }
+
+    public static FrameState initializeFrameState(long tsStart, long tsEnd, boolean isClosed, long aggregate){
+        return new FrameState(0L, tsStart, 0L, aggregate, tsEnd, isClosed);
     }
 
     public void resetFrameState(){
@@ -72,6 +80,10 @@ public class FrameState implements Serializable {
     public void setTsStart(long tsStart) {
         this.tsStart = tsStart;
         this.tsEnd = tsStart+1;
+    }
+
+    public void setStartPossibleInconsistent(long tsStart){
+        this.tsStart = tsStart;
     }
 
     public long getTsEnd() {

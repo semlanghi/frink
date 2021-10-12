@@ -76,7 +76,7 @@ public class InteractiveRunner {
                         TypeInformation.of(SpeedEvent.class));
             else if(JOB_TYPE.endsWith("aggregate"))
                 speedEventDataStreamSink = extendedKeyedStream.frameAggregate((BiFunction<Long, Long, Long> & Serializable) Long::sum, 0L, 150, (ToLongFunction<SpeedEvent> & Serializable) value -> (long) value.getValue()).reduce(
-                        (ReduceFunction<SpeedEvent>) (value1, value2) -> value1.getValue() > value2.getValue() ? value1 : value2,
+                        (ReduceFunction<SpeedEvent>) (value1, value2) -> new SpeedEvent(value1.getKey(), Math.max(value1.getTimestamp(), value2.getTimestamp()), value1.getValue() + value2.getValue()),
                         new PassThroughWindowFunction<>(),
                         TypeInformation.of(SpeedEvent.class));
             else throw new IllegalFormatFlagsException("No valid frame specified.");

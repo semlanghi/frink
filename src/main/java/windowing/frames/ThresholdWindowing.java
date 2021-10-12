@@ -95,7 +95,7 @@ public class ThresholdWindowing<I> extends FrameWindowing<I>{
     }
 
     @Override
-    public Evictor<I, GlobalWindow> evictor() {
+    public Evictor<I, GlobalWindow> singleBufferEvictor() {
         return new Evictor<I,GlobalWindow>() {
 
             private List<TimestampedValue<I>> intermediateValue;
