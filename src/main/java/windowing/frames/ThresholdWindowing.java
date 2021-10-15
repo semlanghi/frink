@@ -27,6 +27,7 @@ import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import java.util.*;
 import java.util.function.ToLongFunction;
 
+//TODO: Fix problem in the evaluation
 public class ThresholdWindowing<I> extends FrameWindowing<I>{
 
     private final int min = 0;

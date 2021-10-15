@@ -42,6 +42,7 @@ import org.apache.flink.streaming.runtime.operators.windowing.TimestampedValue;
 import org.apache.flink.streaming.runtime.operators.windowing.functions.InternalWindowFunction;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.util.OutputTag;
+import windowing.frames.FrameState;
 import windowing.windows.CandidateTimeWindow;
 
 import javax.annotation.Nullable;
@@ -504,9 +505,44 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
     public void open() throws Exception {
         super.open();
 
+        triggerContext = new StateAwareContext(null, null);
         evictorContext = new EvictorContext(null, null);
         evictingWindowState = (InternalListState<K, W, StreamRecord<IN>>)
                 getOrCreateKeyedState(windowSerializer, evictingWindowStateDescriptor);
+    }
+
+    protected class StateAwareContext extends Context{
+
+        public StateAwareContext(K key, W window) {
+            super(key, window);
+        }
+
+        public ValueState<FrameState> getCurrentFrameState(ValueStateDescriptor<FrameState> stateDescriptor) {
+            try {
+                return getPartitionedState(stateDescriptor);
+            } catch (Exception e) {
+                e.printStackTrace();
+            } return null;
+        }
+
+        public MapState<Long, FrameState> getPastFrameState(MapStateDescriptor<Long, FrameState> stateDescriptor) {
+            try {
+                return getPartitionedState(stateDescriptor);
+            } catch (Exception e) {
+                e.printStackTrace();
+            } return null;
+        }
+
+        public Iterable<StreamRecord<IN>> getContent(W window) {
+            try {
+                W stateWindow = getSplittingMergingWindowSet().getStateWindow(window);
+                evictingWindowState.setCurrentNamespace(stateWindow);
+                return StateAwareSingleBufferWindowOperator.this.evictingWindowState.get();
+            } catch (Exception e) {
+                e.printStackTrace();
+            } return null;
+        }
+
     }
 
     @Override

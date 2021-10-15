@@ -45,9 +45,14 @@ import java.util.function.*;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
 
+/**
+ * A window assigner
+ * @param <I>
+ */
 public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, DataDrivenWindow> implements SingleBufferWindowing<I, GlobalWindow> {
 
-    protected ValueStateDescriptor<FrameState> frameStateDescriptor = new ValueStateDescriptor<>("currentFrameState", new FrameState.Serializer());
+    protected ValueStateDescriptor<FrameState> frameStateDescriptor =
+            new ValueStateDescriptor<>("currentFrameState", new FrameState.Serializer());
     protected MapStateDescriptor<Long,FrameState> candidateWindowsDescriptor =
             new MapStateDescriptor<>("candidateWindows", new LongSerializer(), new FrameState.Serializer());
     protected ToLongFunction<I> toLongFunctionValue;
@@ -65,17 +70,16 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
     @Override
     public Collection<DataDrivenWindow> assignWindows(I element, long timestamp, WindowAssigner.WindowAssignerContext context) {
 
-
         // TODO: Add an eviction policy for the windows
         Iterator<CandidateTimeWindow> candidateTimeWindowIterator;
 
         if(element == null){
             // this is the case where we are recomputing
-            candidateTimeWindowIterator= processFrames(timestamp, -1, context);
+            candidateTimeWindowIterator= processFrames(timestamp, -1, new StateAwareWindowAssignerContextWrapper<>(context));
         }else{
             long elementLong = toLongFunctionValue.applyAsLong(element);
 
-            candidateTimeWindowIterator = processFrames(timestamp, elementLong, context);
+            candidateTimeWindowIterator = processFrames(timestamp, elementLong, new StateAwareWindowAssignerContextWrapper<>(context));
         }
 
 
@@ -90,10 +94,10 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
 
     }
 
-    protected Iterator<CandidateTimeWindow> processFrames(long timestamp, long elementLong, WindowAssignerContext context){
+    protected Iterator<CandidateTimeWindow> processFrames(long timestamp, long elementLong, StateAwareContextWrapper<I, DataDrivenWindow> context){
         try {
-            MapState<Long, FrameState> candidateWindowsState = ((StateAwareWindowAssignerContext)context).getPastFrameState(candidateWindowsDescriptor);
-            ValueState<FrameState> currentFrameState = ((StateAwareWindowAssignerContext) context).getCurrentFrameState(frameStateDescriptor);
+            MapState<Long, FrameState> candidateWindowsState = context.getPastFrameState(candidateWindowsDescriptor);
+            ValueState<FrameState> currentFrameState = context.getCurrentFrameState(frameStateDescriptor);
             FrameState frameState = currentFrameState.value();
 
 
@@ -110,7 +114,7 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
                     resultingFrameStates = processFrame(timestamp, elementLong, frameState);
                 } else {
                     //Out-Of-Order Processing on the frame
-                    Iterable<StreamRecord<I>> iterable = ((StateAwareWindowAssignerContext<I, DataDrivenWindow>) context).getContent(new DataDrivenWindow(frameState.getTsStart(), frameState.getTsEnd(), false));
+                    Iterable<StreamRecord<I>> iterable = context.getContent(new DataDrivenWindow(frameState.getTsStart(), frameState.getTsEnd(), false));
                     resultingFrameStates = processOutOfOrder(timestamp, elementLong, frameState, iterable);
                 }
                 if(resultingFrameStates.size()>1)
@@ -134,7 +138,7 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
                          */
 
                         FrameState frameState1 = candidateWindowsState.get(windowStart);
-                        Iterable<StreamRecord<I>> iterable = ((StateAwareWindowAssignerContext<I, DataDrivenWindow>) context).getContent(new DataDrivenWindow(frameState1.getTsStart(), frameState1.getTsEnd(), true));
+                        Iterable<StreamRecord<I>> iterable = context.getContent(new DataDrivenWindow(frameState1.getTsStart(), frameState1.getTsEnd(), true));
                         Collection<FrameState> resultingFrameStates = processOutOfOrder(timestamp, elementLong, frameState1, iterable);
                         return getCandidateTimeWindowIterator(candidateWindowsState, resultingFrameStates);
                     }
@@ -388,15 +392,9 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
                 GlobalWindow window,
                 TriggerContext ctx) throws Exception {
 
-
-            MapState<Long,FrameState> windowState = ctx.getPartitionedState(candidateWindowsDescriptor);
-            ValueState<FrameState> currentFrameState = ((StateAwareWindowAssignerContext) context).getCurrentFrameState(frameStateDescriptor);
-
             long elementLong = toLongFunctionValue.applyAsLong(element);
 
-
-            //TODO: Fix required
-            Iterator<CandidateTimeWindow> finalWindows = processFrames(timestamp,elementLong, null);
+            Iterator<CandidateTimeWindow> finalWindows = processFrames(timestamp,elementLong, new StateAwareTriggerContextWrapper<>(ctx));
 
             //Pre-filter: in case no windows is available, optimization, without going to the singleBufferEvictor
             if(finalWindows.hasNext()){

@@ -29,6 +29,11 @@ import java.util.function.ToLongFunction;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
 
+
+/**
+ *
+ * @param <I>
+ */
 public class AggregateWindowing<I> extends FrameWindowing<I> {
 
     private final BiFunction<Long,Long,Long> agg;

@@ -23,7 +23,7 @@ import java.util.function.ToLongFunction;
 
 public class InteractiveRunner {
 
-    private static final String JOB_TYPE = "frame_multi_delta";
+    private static final String JOB_TYPE = "frame_multi_aggregate";
 
     public static void main(String[] args) throws Exception {
 

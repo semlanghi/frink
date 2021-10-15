@@ -23,6 +23,8 @@ import org.apache.flink.streaming.api.windowing.triggers.Trigger;
 import org.apache.flink.streaming.api.windowing.windows.Window;
 
 public interface SingleBufferWindowing<T,W extends Window> {
+
     public Evictor<T,W> singleBufferEvictor();
+
     public Trigger<T,W> singleBufferTrigger();
 }
