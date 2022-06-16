@@ -100,7 +100,7 @@ public class AggregateWindowing<I> extends FrameWindowing<I> {
                             //This is true since it is a reprocessing of past records belonging to the same frame
                             if (frameStates.size() == 1)
                                 return frameStates.iterator().next();
-                            return null;
+                            return frameStates.stream().min(Comparator.comparingLong(FrameState::getTsStart)).get();
                         }, (frameState, frameState2) -> {
                             if (frameState.getTsStart()==-1)
                                 return frameState2;
@@ -115,7 +115,7 @@ public class AggregateWindowing<I> extends FrameWindowing<I> {
         //Process arg, whether it returns a splitted result (size>1) or a single, go to the frame not yet closed
         Collection<FrameState> withRecordFrameStates = null;
         //This is done only if we are not recomputing
-        if(arg!=-1)
+        if(arg!=-1 && frameStateFinal.getTsEnd()<=ts)
              withRecordFrameStates = processFrame(ts, arg, frameStateFinal);
         else {
             withRecordFrameStates = new ArrayList<>();
@@ -176,7 +176,14 @@ public class AggregateWindowing<I> extends FrameWindowing<I> {
                     int size,
                     GlobalWindow window,
                     EvictorContext evictorContext) {
-
+                try {
+                    for (Iterator<TimestampedValue<I>> itTsValues = elements.iterator(); itTsValues.hasNext();){
+                        itTsValues.next();
+                        itTsValues.remove();
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
             }
         };
     }

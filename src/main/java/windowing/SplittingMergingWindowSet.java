@@ -112,7 +112,7 @@ public class SplittingMergingWindowSet<W extends Window, P> {
         }
     }
 
-    public void splitMergedWindow(W targetWindow, List<Pair<P,W>> splittingPointStateWindows, Splitter<W,P> splitter, boolean leaveLastWindowOpen){
+    public void splitMergedWindow(W targetWindow, List<Pair<P,W>> splittingPointStateWindows, Splitter<W,P> splitter, boolean leaveLastWindowClosed){
 
         /*
         First thing: remove the target window, due to the asymmetry between merging and state windows we cannot use
@@ -133,12 +133,15 @@ public class SplittingMergingWindowSet<W extends Window, P> {
         splittingPointStateWindows.sort(Comparator.comparingLong(o -> o.getRight().maxTimestamp()));
         for (Pair<P,W> tmp: splittingPointStateWindows) {
             Pair<W,W> splittedRemains = splitter.split(focusedWindow, tmp.getLeft());
-            this.mapping.put(splittedRemains.getLeft(), tmp.getRight());
+            //Check for threshold window
+            if(((TimeWindow)splittedRemains.getLeft()).getStart()==((TimeWindow)tmp.getRight()).getStart())
+                this.mapping.put(splittedRemains.getLeft(), tmp.getRight());
+            else this.mapping.put(tmp.getRight(), tmp.getRight());
             previousWindow = splittedRemains.getLeft();
             focusedWindow = splittedRemains.getRight();
         }
         if(previousWindow instanceof DataDrivenWindow)
-            ((DataDrivenWindow) previousWindow).setClosed(leaveLastWindowOpen);
+            ((DataDrivenWindow) previousWindow).setClosed(leaveLastWindowClosed);
     }
 
     public void mergeRebalancing(W focusedWindow, MergeFunction<W> mergeFunction) throws Exception {
@@ -172,6 +175,7 @@ public class SplittingMergingWindowSet<W extends Window, P> {
                 if (res != null) {
                     if(mergedStateWindow != null) {
                         if (mergedStateWindow.maxTimestamp() > res.maxTimestamp()){
+                            mergedStateWindows.add(mergedStateWindow);
                             mergedStateWindow = res;
                         } else mergedStateWindows.add(res);
                     } else mergedStateWindow = res;

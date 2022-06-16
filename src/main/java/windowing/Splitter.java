@@ -1,6 +1,5 @@
 package windowing;
 
-import jdk.nashorn.internal.objects.annotations.Function;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.streaming.api.windowing.windows.Window;

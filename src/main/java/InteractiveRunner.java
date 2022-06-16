@@ -23,7 +23,7 @@ import java.util.function.ToLongFunction;
 
 public class InteractiveRunner {
 
-    private static final String JOB_TYPE = "frame_multi_aggregate";
+    private static final String JOB_TYPE = "frame_multi_delta";
 
     public static void main(String[] args) throws Exception {
 
@@ -90,17 +90,16 @@ public class InteractiveRunner {
 
             if (JOB_TYPE.endsWith("threshold"))
                 speedEventDataStreamSink = extendedKeyedStream.frameThresholdSingle(50, (ToLongFunction<SpeedEvent> & Serializable) value -> (long) value.getValue()).reduce(
-                        (ReduceFunction<SpeedEvent>) (value1, value2) -> value1.getValue() > value2.getValue() ? value1 : value2,
-                        new PassThroughWindowFunction<>(),
+                        (ReduceFunction<SpeedEvent>) (value1, value2) -> new SpeedEvent(value1.getKey(), Math.max(value1.getTimestamp(), value2.getTimestamp()), value1.getValue() + value2.getValue()),                        new PassThroughWindowFunction<>(),
                         TypeInformation.of(SpeedEvent.class));
             else if (JOB_TYPE.endsWith("delta"))
                 speedEventDataStreamSink = extendedKeyedStream.frameDeltaSingle(50, (ToLongFunction<SpeedEvent> & Serializable) value -> (long) value.getValue()).reduce(
-                        (ReduceFunction<SpeedEvent>) (value1, value2) -> value1.getValue() > value2.getValue() ? value1 : value2,
+                        (ReduceFunction<SpeedEvent>) (value1, value2) -> new SpeedEvent(value1.getKey(), Math.max(value1.getTimestamp(), value2.getTimestamp()), value1.getValue() + value2.getValue()),
                         new PassThroughWindowFunction<>(),
                         TypeInformation.of(SpeedEvent.class));
             else if (JOB_TYPE.endsWith("aggregate"))
-                speedEventDataStreamSink = extendedKeyedStream.frameAggregateSingle((BiFunction<Long, Long, Long> & Serializable) Long::sum, 0L, 50, (ToLongFunction<SpeedEvent> & Serializable) value -> (long) value.getValue()).reduce(
-                        (ReduceFunction<SpeedEvent>) (value1, value2) -> value1.getValue() > value2.getValue() ? value1 : value2,
+                speedEventDataStreamSink = extendedKeyedStream.frameAggregateSingle((BiFunction<Long, Long, Long> & Serializable) Long::sum, 0L, 150, (ToLongFunction<SpeedEvent> & Serializable) value -> (long) value.getValue()).reduce(
+                        (ReduceFunction<SpeedEvent>) (value1, value2) -> new SpeedEvent(value1.getKey(), Math.max(value1.getTimestamp(), value2.getTimestamp()), value1.getValue() + value2.getValue()),
                         new PassThroughWindowFunction<>(),
                         TypeInformation.of(SpeedEvent.class));
             else throw new IllegalFormatFlagsException("No valid frame specified.");
@@ -121,15 +120,16 @@ public class InteractiveRunner {
                 ctx.collectWithTimestamp(new SpeedEvent("1", 4000, 56),4000);
                 ctx.collectWithTimestamp(new SpeedEvent("1", 7000, 57),7000);
                 ctx.collectWithTimestamp(new SpeedEvent("1", 8000, 130),8000);
-                ctx.collectWithTimestamp(new SpeedEvent("1", 10000, 120),10000);
+                ctx.collectWithTimestamp(new SpeedEvent("1", 10000, 30),10000);
                 ctx.collectWithTimestamp(new SpeedEvent("1", 11000, 120),11000);
                 ctx.collectWithTimestamp(new SpeedEvent("1", 12000, 50),12000);
-                ctx.collectWithTimestamp(new SpeedEvent("1", 13000, 60),13000);
+                ctx.collectWithTimestamp(new SpeedEvent("1", 13000, 40),13000);
                 ctx.collectWithTimestamp(new SpeedEvent("1", 14000, 60),14000);
                 ctx.collectWithTimestamp(new SpeedEvent("1", 15000, 130),15000);
 
                 ctx.collectWithTimestamp(new SpeedEvent("1", 5000, 130),5000);
                 ctx.collectWithTimestamp(new SpeedEvent("1", 9000, 50),9000);
+                ctx.collectWithTimestamp(new SpeedEvent("1", 4500, 30),4500);
             }
         }
 

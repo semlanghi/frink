@@ -43,10 +43,13 @@ import org.apache.flink.streaming.runtime.operators.windowing.functions.Internal
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.util.OutputTag;
 import windowing.frames.FrameState;
+import windowing.frames.FrameWindowing;
 import windowing.windows.CandidateTimeWindow;
+import windowing.windows.DataDrivenWindow;
 
 import javax.annotation.Nullable;
 import java.util.*;
+import java.util.function.Consumer;
 
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
@@ -73,6 +76,8 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
 
     private final Evictor<? super IN, ? super W> evictor;
 
+    private final FrameWindowing<IN>.FrameTrigger frameTrigger;
+
     private final StateDescriptor<? extends ListState<StreamRecord<IN>>, ?> evictingWindowStateDescriptor;
 
     // ------------------------------------------------------------------------
@@ -98,6 +103,8 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
         super(windowAssigner, windowSerializer, keySelector,
                 keySerializer, null, windowFunction, trigger, allowedLateness, lateDataOutputTag);
 
+        //Unchecked assignment, but assumed to be a frame trigger for now
+        this.frameTrigger = (FrameWindowing<IN>.FrameTrigger) trigger;
         this.evictor = checkNotNull(evictor);
         this.evictingWindowStateDescriptor = checkNotNull(windowStateDescriptor);
     }
@@ -191,7 +198,7 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
                         .transform(input -> TimestampedValue.from(input));
 
                 Map<CandidateTimeWindow, Iterable<TimestampedValue<IN>>> iterables =
-                        divideGlobalWindow(recordsWithTimestamp, getPartitionedState(new MapStateDescriptor<>("candidateWindows", new LongSerializer(), new CandidateTimeWindow.Serializer())));
+                        divideGlobalWindow(recordsWithTimestamp, getPartitionedState(new MapStateDescriptor<>("candidateWindows", new LongSerializer(), new FrameState.Serializer())));
 
                 for (CandidateTimeWindow tmp : iterables.keySet()
                 ) {
@@ -232,13 +239,15 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
                 evictorContext.key = key;
                 evictorContext.window = window;
 
-                TriggerResult triggerResult = triggerContext.onElement(element);
+                ComplexTriggerResult complexTriggerResult = this.frameTrigger.onWindow(element.getValue(), element.getTimestamp(), triggerContext);
 
                 Iterable<StreamRecord<IN>> contents = evictingWindowState.get();
                 if (contents == null) {
                     // if we have no state, there is nothing to do
                     continue;
                 }
+
+
                 
                 timestampedCollector.setAbsoluteTimestamp(window.maxTimestamp());
 
@@ -251,35 +260,29 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
                                 return TimestampedValue.from(input);
                             }
                         });
-                
-                Map<CandidateTimeWindow, Iterable<TimestampedValue<IN>>> iterables =
-                        divideGlobalWindow(recordsWithTimestamp, getPartitionedState(window, windowSerializer, new MapStateDescriptor<>("candidateWindows", new LongSerializer(), new CandidateTimeWindow.Serializer())));
+
+                //Understood the problem: the iterator for composing the windows take all the elements that there are
+                //How to know which window to fire???
+                // 1st solution: return it through the trigger
+                // 2nd solution: create an internal windowAssigner
+                SortedMap<DataDrivenWindow, ? extends Iterable<TimestampedValue<IN>>> iterables =
+                        extractData(recordsWithTimestamp, complexTriggerResult.resultWindows);
                 Iterable<TimestampedValue<IN>> resultAfterEviction = new ArrayList<>();
                 FluentIterable<TimestampedValue<IN>> fluentResults = FluentIterable.from(resultAfterEviction);
 
 
-                for (CandidateTimeWindow tmp : iterables.keySet()
+                for (DataDrivenWindow tmp : iterables.keySet()
                      ) {
-                    if (triggerResult.isFire()) {
-                        emitWindowContents(window, iterables.get(tmp), evictingWindowState);
-
+                    if (complexTriggerResult.internalResult.isFire()) {
                         //work around to fix FLINK-4369, remove the evicted elements from the windowState.
                         //this is inefficient, but there is no other way to remove elements from ListState, which is an AppendingState.
-                        if(!tmp.isClosed()){
-                            fluentResults = fluentResults.append(iterables.get(tmp));
-                        }else{
-                            getPartitionedState(window, windowSerializer, new MapStateDescriptor<>("candidateWindows", new LongSerializer(), new CandidateTimeWindow.Serializer())).remove(tmp.getStart());
-                        }
+                        fluentResults = fluentResults.append(iterables.get(tmp));
+                        emitWindowContents(window, iterables.get(tmp), evictingWindowState);
 
                     }
                 }
 
-                evictingWindowState.clear();
-                for (TimestampedValue<IN> record : fluentResults) {
-                    evictingWindowState.add(record.getStreamRecord());
-                }
-
-                if (triggerResult.isPurge()) {
+                if (complexTriggerResult.internalResult.isPurge()) {
                     evictingWindowState.clear();
                 }
                 registerCleanupTimer(window);
@@ -300,7 +303,7 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
         }
     }
 
-    private Map<CandidateTimeWindow, Iterable<TimestampedValue<IN>>> divideGlobalWindow(Iterable<TimestampedValue<IN>> collection, MapState<Long, CandidateTimeWindow> mapState){
+    private Map<CandidateTimeWindow, Iterable<TimestampedValue<IN>>> divideGlobalWindow(Iterable<TimestampedValue<IN>> collection, MapState<Long, FrameState> mapState){
         try {
             List<CandidateTimeWindow> timeWindows = new ArrayList<>();
             Map<CandidateTimeWindow, Iterable<TimestampedValue<IN>>> internalWindows = new HashMap<>();
@@ -308,21 +311,41 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
             if(mapState.keys()==null)
                 return Collections.emptyMap();
 
-            for (CandidateTimeWindow timeWindow : mapState.values()) {
+            for (FrameState timeWindow : mapState.values()) {
                 FluentIterable<TimestampedValue<IN>> fluentIterable = FluentIterable
                         .from(collection)
                         .filter(new Predicate<TimestampedValue<IN>>() {
                             @Override
                             public boolean apply(@Nullable TimestampedValue<IN> inStreamRecord) {
                                 assert inStreamRecord != null;
-                                return inStreamRecord.getTimestamp() >= timeWindow.getStart() && inStreamRecord.getTimestamp() <= timeWindow.getEnd() - 1;
+                                return inStreamRecord.getTimestamp() >= timeWindow.getTsStart() && inStreamRecord.getTimestamp() <= timeWindow.getTsEnd() - 1;
                             }
                         });
-                internalWindows.put(timeWindow, fluentIterable);
+                internalWindows.put(new CandidateTimeWindow(timeWindow.getTsStart(), timeWindow.getTsEnd(), timeWindow.isClosed()), fluentIterable);
             } return internalWindows;
         } catch (Exception e) {
             e.printStackTrace();
         } return Collections.emptyMap();
+    }
+
+    /**
+     * This method extracts the related events given a set of windows from the State Backend.
+     * @param resultCollection
+     * @param resultWindows
+     * @return a map object containing the windows mapped to the related set of events
+     */
+    private SortedMap<DataDrivenWindow, ? extends Iterable<TimestampedValue<IN>>> extractData(Iterable<TimestampedValue<IN>> resultCollection, Collection<DataDrivenWindow> resultWindows){
+
+        SortedMap<DataDrivenWindow, List<TimestampedValue<IN>>> internalWindows = new TreeMap<>(Comparator.comparingLong(DataDrivenWindow::getStart));
+        resultCollection.forEach(inTimestampedValue -> resultWindows.stream()
+                .filter(window -> window.getStart()<=inTimestampedValue.getTimestamp() && window.getEnd()> inTimestampedValue.getTimestamp())
+                .findFirst()
+                .ifPresent(window -> {
+                    internalWindows.putIfAbsent(window, new ArrayList<>());
+                    internalWindows.get(window).add(inTimestampedValue);
+                }));
+
+        return internalWindows;
     }
 
     @Override
@@ -535,14 +558,25 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
 
         public Iterable<StreamRecord<IN>> getContent(W window) {
             try {
-                W stateWindow = getSplittingMergingWindowSet().getStateWindow(window);
-                evictingWindowState.setCurrentNamespace(stateWindow);
+                evictingWindowState.setCurrentNamespace(this.window);
                 return StateAwareSingleBufferWindowOperator.this.evictingWindowState.get();
             } catch (Exception e) {
                 e.printStackTrace();
             } return null;
         }
 
+
+        /**
+         * NB: I will use this method to check the trigger on the window, NOT on the processing time
+         * Artificial Solution, but doable for now
+         * @param time
+         * @return
+         * @throws Exception
+         */
+        @Override
+        public TriggerResult onProcessingTime(long time) throws Exception {
+            return StateAwareSingleBufferWindowOperator.this.trigger.onProcessingTime(time, window, this);
+        }
     }
 
     @Override

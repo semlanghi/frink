@@ -35,12 +35,16 @@ import org.apache.flink.streaming.api.windowing.evictors.Evictor;
 import org.apache.flink.streaming.api.windowing.triggers.Trigger;
 import org.apache.flink.streaming.api.windowing.triggers.TriggerResult;
 import org.apache.flink.streaming.api.windowing.windows.GlobalWindow;
+import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
+import org.apache.flink.streaming.api.windowing.windows.Window;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import windowing.*;
 import windowing.windows.CandidateTimeWindow;
 import windowing.windows.DataDrivenWindow;
 
+import java.awt.*;
 import java.util.*;
+import java.util.List;
 import java.util.function.*;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
@@ -114,7 +118,9 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
                     resultingFrameStates = processFrame(timestamp, elementLong, frameState);
                 } else {
                     //Out-Of-Order Processing on the frame
-                    Iterable<StreamRecord<I>> iterable = context.getContent(new DataDrivenWindow(frameState.getTsStart(), frameState.getTsEnd(), false));
+                    DataDrivenWindow dataDrivenWindow = new DataDrivenWindow(frameState.getTsStart(), frameState.getTsEnd(), false);
+                    Iterable<StreamRecord<I>> iterable = context.getContent(dataDrivenWindow);
+                    iterable = checkEventsContainment(iterable, dataDrivenWindow);
                     resultingFrameStates = processOutOfOrder(timestamp, elementLong, frameState, iterable);
                 }
                 if(resultingFrameStates.size()>1)
@@ -138,7 +144,9 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
                          */
 
                         FrameState frameState1 = candidateWindowsState.get(windowStart);
-                        Iterable<StreamRecord<I>> iterable = context.getContent(new DataDrivenWindow(frameState1.getTsStart(), frameState1.getTsEnd(), true));
+                        DataDrivenWindow dataDrivenWindow = new DataDrivenWindow(frameState1.getTsStart(), frameState1.getTsEnd(), true);
+                        Iterable<StreamRecord<I>> iterable = context.getContent(dataDrivenWindow);
+                        iterable = checkEventsContainment(iterable, dataDrivenWindow);
                         Collection<FrameState> resultingFrameStates = processOutOfOrder(timestamp, elementLong, frameState1, iterable);
                         return getCandidateTimeWindowIterator(candidateWindowsState, resultingFrameStates);
                     }
@@ -148,6 +156,16 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
         } catch (Exception e) {
             e.printStackTrace();
         } return Collections.emptyIterator();
+    }
+
+    private Iterable<StreamRecord<I>> checkEventsContainment(Iterable<StreamRecord<I>> iterable, DataDrivenWindow dataDrivenWindow) {
+        List<StreamRecord<I>> checkedEvents = new ArrayList<>();
+        iterable.forEach(iStreamRecord -> {
+            //TODO: FIX THIS! The window does not have access to the events of the next one, that is why the OutOfOrder Processing method goes infinite, since it cannot close the window
+            if (dataDrivenWindow.getStart()<=iStreamRecord.getTimestamp() && dataDrivenWindow.getEnd()> iStreamRecord.getTimestamp())
+                checkedEvents.add(iStreamRecord);
+        });
+        return checkedEvents;
     }
 
     private Iterator<CandidateTimeWindow> getCandidateTimeWindowIterator(MapState<Long, FrameState> candidateWindowsState, Collection<FrameState> resultingFrameStates) {
@@ -293,6 +311,7 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
                             e.printStackTrace();
                         }
                     });
+            coveringFrameState.setAuxiliaryValue(candidateWindowsState.get(insertedWindow.getStart()).getAuxiliaryValue());
 
 
 
@@ -378,9 +397,11 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
         };
     }
 
-    protected class FrameTrigger extends Trigger<I, GlobalWindow> {
+    public class FrameTrigger extends Trigger<I, GlobalWindow> {
 
         //TODO: Add nested singleBufferTrigger for SECRET reporting variations
+        //TODO: Modify the generics for being a DataDrivenWindow, this way you can define the onProcessingMethod
+        //TODO: as a trigger on the window
 
         public FrameTrigger() {
         }
@@ -394,15 +415,97 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
 
             long elementLong = toLongFunctionValue.applyAsLong(element);
 
-            Iterator<CandidateTimeWindow> finalWindows = processFrames(timestamp,elementLong, new StateAwareTriggerContextWrapper<>(ctx));
+            StateAwareContextWrapper<I,DataDrivenWindow> stateAwareContextWrapper = new StateAwareTriggerContextWrapper<>(ctx);
+            Iterator<CandidateTimeWindow> candidateTimeWindowIterator = processFrames(timestamp,elementLong, stateAwareContextWrapper);
+
+            List<DataDrivenWindow> finalWindows = new ArrayList<>();
+
+            while(candidateTimeWindowIterator.hasNext()){
+                CandidateTimeWindow candidateTimeWindow = candidateTimeWindowIterator.next();
+                finalWindows.add(candidateTimeWindow.getFinalWindow());
+            }
+
+            Set<DataDrivenWindow> definitiveElementWindows = new HashSet<>();
+            if (finalWindows.stream().anyMatch(w -> w.maxTimestamp() > timestamp)){
+                outOfOrderProcessing(finalWindows, definitiveElementWindows, stateAwareContextWrapper);
+            }
 
             //Pre-filter: in case no windows is available, optimization, without going to the singleBufferEvictor
-            if(finalWindows.hasNext()){
+            if(!finalWindows.isEmpty()){
                 context = ctx;
                 return TriggerResult.FIRE;
+            } return TriggerResult.CONTINUE;
+        }
+
+        private void outOfOrderProcessing(Collection<DataDrivenWindow> currentWindows,
+                                          Set<DataDrivenWindow> recomputedWindowsAccumulator, StateAwareContextWrapper<I,DataDrivenWindow> stateAwareContextWrapper) {
+
+            recomputedWindowsAccumulator.addAll(currentWindows.stream().filter(DataDrivenWindow::isClosed).collect(Collectors.toList()));
+
+            // followed by a recomputation in the scope, checking first that there exists a recomputation time (!=-1)
+            Collection<DataDrivenWindow> recomputedWindows = new ArrayList<>();
+
+            Optional<DataDrivenWindow> optionalStillOpenWindow = currentWindows.stream().filter(w -> !w.isClosed()).findFirst();
+
+            DataDrivenWindow stillOpenWindow = windowMerge(optionalStillOpenWindow, stateAwareContextWrapper);
+
+
+            if(stillOpenWindow!=null) {
+                Iterator<CandidateTimeWindow> candidateTimeWindowIterator = processFrames(stillOpenWindow.getStart(), -1, stateAwareContextWrapper);
+
+                while (candidateTimeWindowIterator.hasNext()) {
+                    CandidateTimeWindow candidateTimeWindow = candidateTimeWindowIterator.next();
+                    recomputedWindows.add(candidateTimeWindow.getFinalWindow());
+                }
+
+
+                Optional<DataDrivenWindow> maximumWindowOfCurrentIteration = currentWindows.stream()
+                        .max(Comparator.comparingLong(Window::maxTimestamp));
+
+                // NOTE: this should be always present
+                if (maximumWindowOfCurrentIteration.isPresent()) {
+                    if (!recomputedWindows.stream().filter(DataDrivenWindow::isClosed).collect(Collectors.toSet()).contains(maximumWindowOfCurrentIteration.get())) {
+                        outOfOrderProcessing(recomputedWindows, recomputedWindowsAccumulator, stateAwareContextWrapper);
+                    } else
+                        recomputedWindowsAccumulator.addAll(recomputedWindows.stream().filter(DataDrivenWindow::isClosed).collect(Collectors.toSet()));
+                }
+            } else {
+                //THRESHOLD WINDOW CASE
+
+
             }
-            else
-                return TriggerResult.PURGE;
+        }
+
+        private DataDrivenWindow windowMerge(Optional<DataDrivenWindow> optionalStillOpenWindow, StateAwareContextWrapper<I, DataDrivenWindow> stateAwareContextWrapper) {
+            if (optionalStillOpenWindow.isPresent()){
+                try {
+                    final DataDrivenWindow[] result = new DataDrivenWindow[1];
+                    optionalStillOpenWindow.get().setRecomputing(true);
+                    MapState<Long, FrameState> pastWindows = stateAwareContextWrapper.getPastFrameState(candidateWindowsDescriptor);
+                    Collection<DataDrivenWindow> frameWindowsCollection =
+                            StreamSupport.stream(pastWindows
+                                    .values().spliterator(), false)
+                                    .map(frameState -> {
+                                        if(frameState.getTsStart()==optionalStillOpenWindow.get().getStart())
+                                            return optionalStillOpenWindow.get();
+                                        else return new DataDrivenWindow(frameState.getTsStart(), frameState.getTsEnd(), frameState.isClosed());
+                                    })
+                                    .collect(Collectors.toList());
+                    mergeWindows(frameWindowsCollection, (toBeMerged, mergeResult) -> toBeMerged.forEach(window -> {
+                        try {
+                            pastWindows.remove(window.getStart());
+                            pastWindows.put(mergeResult.getStart(), mergeResult.revertToState(0,0,0));
+                            result[0] = mergeResult;
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        }
+                    }));
+                    return result[0];
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+            return null;
         }
 
         @Override
@@ -419,6 +522,35 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
                 GlobalWindow window,
                 TriggerContext ctx) throws Exception {
             return TriggerResult.CONTINUE;
+        }
+
+        public ComplexTriggerResult onWindow(I element,
+                                      long timestamp,
+                                      TriggerContext ctx){
+
+            long elementLong = toLongFunctionValue.applyAsLong(element);
+
+            StateAwareContextWrapper<I,DataDrivenWindow> stateAwareContextWrapper = new StateAwareTriggerContextWrapper<>(ctx);
+            Iterator<CandidateTimeWindow> candidateTimeWindowIterator = processFrames(timestamp,elementLong, stateAwareContextWrapper);
+
+            List<DataDrivenWindow> finalWindows = new ArrayList<>();
+
+            while(candidateTimeWindowIterator.hasNext()){
+                CandidateTimeWindow candidateTimeWindow = candidateTimeWindowIterator.next();
+                finalWindows.add(candidateTimeWindow.getFinalWindow());
+            }
+
+            SortedSet<DataDrivenWindow> definitiveElementWindows = new TreeSet<>(Comparator.comparingLong(TimeWindow::getStart));
+            if (finalWindows.stream().anyMatch(w -> w.maxTimestamp() > timestamp)){
+                outOfOrderProcessing(finalWindows, definitiveElementWindows, stateAwareContextWrapper);
+            }else{
+                definitiveElementWindows.addAll(finalWindows);
+            }
+
+            //Pre-filter: in case no windows is available, optimization, without going to the singleBufferEvictor
+            if(!definitiveElementWindows.isEmpty()){
+                return new ComplexTriggerResult(TriggerResult.FIRE, definitiveElementWindows);
+            } return new ComplexTriggerResult(TriggerResult.CONTINUE, Collections.emptyList());
         }
 
         @Override

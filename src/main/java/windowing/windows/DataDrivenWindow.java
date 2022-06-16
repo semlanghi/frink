@@ -6,11 +6,12 @@ import org.apache.flink.api.common.typeutils.base.TypeSerializerSingleton;
 import org.apache.flink.core.memory.DataInputView;
 import org.apache.flink.core.memory.DataOutputView;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
+import windowing.frames.FrameState;
 
 import java.io.IOException;
 import java.util.Objects;
 
-public class DataDrivenWindow extends TimeWindow {
+public class DataDrivenWindow extends TimeWindow  {
 
     private boolean isClosed;
     private boolean isRecomputing = false;
@@ -42,6 +43,10 @@ public class DataDrivenWindow extends TimeWindow {
 
     public boolean isRecomputing() {
         return isRecomputing;
+    }
+
+    public FrameState revertToState(long count, long auxiliaryValue, long aggregate){
+        return new FrameState(count, this.getStart(), auxiliaryValue, aggregate, this.getEnd(), this.isClosed);
     }
 
     public void setRecomputing(boolean recomputing) {

@@ -100,7 +100,7 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
 
     private final KeySelector<IN, K> keySelector;
 
-    private final Trigger<? super IN, ? super W> trigger;
+    protected final Trigger<? super IN, ? super W> trigger;
 
     private final StateDescriptor<? extends AppendingState<StreamRecord<IN>, Iterable<StreamRecord<IN>>>, ?> windowStateDescriptor;
 
@@ -333,10 +333,12 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
 
         if (windowAssigner instanceof MergingWindowAssigner) {
 
-            Set<W> definitiveElementWindows = new HashSet<>(elementWindows);
+            Set<W> definitiveElementWindows = new HashSet<>();
             if (elementWindows.stream().anyMatch(w -> w.maxTimestamp() > element.getTimestamp())){
                 outOfOrderProcessing(element, key, false, elementWindows, mergingWindows, definitiveElementWindows);
                 ooo = true;
+            } else {
+                definitiveElementWindows.addAll(elementWindows);
             }
 
             for (W window: definitiveElementWindows
@@ -455,8 +457,6 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
                         continue;
                     }
                     emitWindowContents(window, contents);
-
-
                 }
 
                 if (triggerResult.isPurge()) {
@@ -482,9 +482,8 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
     private void outOfOrderProcessing(StreamRecord<IN> element, K key, boolean elementInserted, Collection<W> currentWindows,
                                       SplittingMergingWindowSet<W,Long> mergingWindows, Set<W> recomputedWindowsAccumulator) throws Exception {
 
+        //TODO: Fix redundancy in the addition of multiple windows
         recomputedWindowsAccumulator.addAll(currentWindows);
-
-
 
         if (currentWindows.stream()
                 .allMatch(w -> (w instanceof DataDrivenWindow))) {
@@ -519,7 +518,7 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
         }
     }
 
-    private long windowMerge(K key, Collection<W> elementWindows, SplittingMergingWindowSet<W, Long> mergingWindows) {
+    private long  windowMerge(K key, Collection<W> elementWindows, SplittingMergingWindowSet<W, Long> mergingWindows) {
         try {
             Optional<W> optionalStillOpenWindow = elementWindows.stream().filter(w -> !((DataDrivenWindow)w).isClosed()).findFirst();
 
@@ -583,7 +582,7 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
         });
     }
 
-    private void windowSplit(Collection<W> elementWindows, SplittingMergingWindowSet<W, Long> mergingWindows, boolean leaveLastWindowOpen) throws Exception {
+    private void windowSplit(Collection<W> elementWindows, SplittingMergingWindowSet<W, Long> mergingWindows, boolean leaveLastWindowClosed) throws Exception {
         Optional<Long> minimumStart = elementWindows.stream()
                 .filter(w -> w instanceof TimeWindow)
                 .map(w -> ((TimeWindow) w).getStart())
@@ -608,7 +607,7 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
                 W leftMost = windowFactory.apply(((TimeWindow)target).getStart(), splittingPoint);
                 W rightMost = windowFactory.apply(splittingPoint, target.maxTimestamp()+1);
                 return new ImmutablePair<>(leftMost,rightMost);
-            }, leaveLastWindowOpen);
+            }, leaveLastWindowClosed);
             mergingWindows.persist();
         }
     }

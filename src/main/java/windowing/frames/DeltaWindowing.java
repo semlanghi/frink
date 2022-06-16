@@ -87,7 +87,7 @@ public class DeltaWindowing<I> extends FrameWindowing<I> {
                             Collection<FrameState> frameStates = processFrame(iStreamRecord.getTimestamp(), toLongFunctionValue.applyAsLong(iStreamRecord.getValue()), frameState);
                             if (frameStates.size() == 1)
                                 return frameStates.iterator().next();
-                            return null;
+                            return frameStates.stream().min(Comparator.comparingLong(FrameState::getTsStart)).get();
                         }, (frameState, frameState2) -> {
                             if (frameState.getTsStart()==-1)
                                 return frameState2;
