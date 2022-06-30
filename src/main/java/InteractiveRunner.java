@@ -127,9 +127,20 @@ public class InteractiveRunner {
                 ctx.collectWithTimestamp(new SpeedEvent("1", 14000, 60),14000);
                 ctx.collectWithTimestamp(new SpeedEvent("1", 15000, 130),15000);
 
+
                 ctx.collectWithTimestamp(new SpeedEvent("1", 5000, 130),5000);
                 ctx.collectWithTimestamp(new SpeedEvent("1", 9000, 50),9000);
                 ctx.collectWithTimestamp(new SpeedEvent("1", 4500, 30),4500);
+
+                ctx.collectWithTimestamp(new SpeedEvent("1", 16000, 130),15000);
+
+                ctx.collectWithTimestamp(new SpeedEvent("1", 24500, 30),24500);
+                ctx.collectWithTimestamp(new SpeedEvent("1", 25500, 30),25500);
+                ctx.collectWithTimestamp(new SpeedEvent("1", 26500, 30),26500);
+                ctx.collectWithTimestamp(new SpeedEvent("1", 27500, 30),27500);
+                ctx.collectWithTimestamp(new SpeedEvent("1", 28500, 30),28500);
+
+
             }
         }
 
