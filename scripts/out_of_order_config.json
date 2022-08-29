@@ -1,0 +1,18 @@
+{
+  "outputFilePath":"doesn't matter, is set from pipeline",
+  "rawFilePath": "doesn't matter is set from pipeline",
+  "keyIndex": 0,
+  "keySelect": -1,
+  "srcTimeScale": "ms",
+  "timeIndex": 8,
+  "seperator": ",",
+  "startTime": 2000,
+  "endTime": 1556000,
+  "generatorConfigurations": [
+    {
+      "outOfOrder": 50,
+      "maxDelay": -1000,
+      "minDelay": -2000
+    }
+  ]
+}
