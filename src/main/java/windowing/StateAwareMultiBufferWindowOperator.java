@@ -502,7 +502,7 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
             // followed by a recomputation in the scope, checking first that there exists a recomputation time (!=-1)
             Collection<W> recomputedWindows = Collections.emptyList();
             if(recomputationTime!=-1)
-                recomputedWindows = windowAssigner.assignWindows(elementInserted ? null : element.getValue(), recomputationTime, windowAssignerContext);
+                recomputedWindows = windowAssigner.assignWindows( null, recomputationTime, windowAssignerContext);
 
             Optional<W> maximumWindowOfCurrentIteration = currentWindows.stream()
                     .max(Comparator.comparingLong(Window::maxTimestamp));

@@ -79,7 +79,7 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
 
         if(element == null){
             // this is the case where we are recomputing
-            candidateTimeWindowIterator= processFrames(timestamp, -1, new StateAwareWindowAssignerContextWrapper<>(context));
+            candidateTimeWindowIterator= recomputeFrames(timestamp, new StateAwareWindowAssignerContextWrapper<>(context));
         }else{
             long elementLong = toLongFunctionValue.applyAsLong(element);
 
@@ -158,6 +158,41 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
         } return Collections.emptyIterator();
     }
 
+
+    protected Iterator<CandidateTimeWindow> recomputeFrames(long timestamp, StateAwareContextWrapper<I, DataDrivenWindow> context){
+        try {
+            MapState<Long, FrameState> candidateWindowsState = context.getPastFrameState(candidateWindowsDescriptor);
+            ValueState<FrameState> currentFrameState = context.getCurrentFrameState(frameStateDescriptor);
+            FrameState frameState = currentFrameState.value();
+
+            // Out-Of-Order Processing on a Previous Frame
+
+
+            for (Iterator<Long> it = candidateWindowsState.keys().iterator(); it.hasNext();){
+                Long windowStart = it.next();
+                // Locate the right Frame instance
+                if(timestamp>=windowStart && timestamp<candidateWindowsState.get(windowStart).getTsEnd()){
+                    /*
+                    If the size of the collection is equal to one, only the located frameState has been modified, i.e., no side effects
+                    Else, a recomputation of the frame has been done, i.e., a split
+                    All the splitted frame instances are valid, except the last one,
+                    which may be merged with the next frame instances. For this reason, we sort them,
+                    and return all of them, marking the last one for reprocessing (already marked by the fact that the window is not closed).
+                     */
+
+                    FrameState frameState1 = candidateWindowsState.get(windowStart);
+                    DataDrivenWindow dataDrivenWindow = new DataDrivenWindow(frameState1.getTsStart(), frameState1.getTsEnd(), true);
+                    Iterable<StreamRecord<I>> iterable = context.getContent(dataDrivenWindow);
+                    iterable = checkEventsContainment(iterable, dataDrivenWindow);
+                    Collection<FrameState> resultingFrameStates = recomputeOutOfOrder(timestamp, frameState1, iterable);
+                    return getCandidateTimeWindowIterator(candidateWindowsState, resultingFrameStates);
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        } return Collections.emptyIterator();
+    }
+
     private Iterable<StreamRecord<I>> checkEventsContainment(Iterable<StreamRecord<I>> iterable, DataDrivenWindow dataDrivenWindow) {
         List<StreamRecord<I>> checkedEvents = new ArrayList<>();
         iterable.forEach(iStreamRecord -> {
@@ -222,6 +257,8 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
 
 
     protected abstract Collection<FrameState> processOutOfOrder(long ts, long arg, FrameState rebuildingFrameState, Iterable<StreamRecord<I>> iterable) throws Exception;
+
+    protected abstract Collection<FrameState> recomputeOutOfOrder(long ts, FrameState rebuildingFrameState, Iterable<StreamRecord<I>> iterable) throws Exception;
 
 
     @Override

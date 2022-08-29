@@ -81,7 +81,7 @@ public class InteractiveRunner {
                         TypeInformation.of(SpeedEvent.class));
             else throw new IllegalFormatFlagsException("No valid frame specified.");
 
-            speedEventDataStreamSink.writeAsText("./src/main/resources/output-" + JOB_TYPE + " parallelism " + streamExecutionEnvironment.getParallelism(), FileSystem.WriteMode.OVERWRITE);
+            speedEventDataStreamSink.writeAsText("./src/main/resources/output-" + JOB_TYPE + "_alternative" + " parallelism " + streamExecutionEnvironment.getParallelism() , FileSystem.WriteMode.OVERWRITE);
             streamExecutionEnvironment.execute(JOB_TYPE);
         }else if(JOB_TYPE.startsWith("frame_single_")) {
             ExtendedKeyedStream<SpeedEvent, String> extendedKeyedStream = new ExtendedKeyedStream<>(rawDataStream, RawEvent::getKey);
