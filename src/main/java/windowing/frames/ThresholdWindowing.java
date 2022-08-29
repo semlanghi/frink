@@ -96,6 +96,18 @@ public class ThresholdWindowing<I> extends FrameWindowing<I>{
     }
 
     @Override
+    protected Collection<FrameState> recomputeOutOfOrder(long ts, FrameState rebuildingFrameState, Iterable<StreamRecord<I>> iterable) throws Exception {
+        //TODO : Fix this artificial solutions
+
+        FrameState frameState = FrameState.initializeFrameState(rebuildingFrameState.getTsStart(), ts, true);
+        frameState.increment(); // This
+        // starting time of the next window = ts+1, since otherwise the current event will be part of it
+        FrameState frameState1 = FrameState.initializeFrameState(ts+1,rebuildingFrameState.getTsEnd(), true);
+        frameState1.increment(); // And This
+        return Arrays.asList(frameState, frameState1);
+    }
+
+    @Override
     public Evictor<I, GlobalWindow> singleBufferEvictor() {
         return new Evictor<I,GlobalWindow>() {
 
