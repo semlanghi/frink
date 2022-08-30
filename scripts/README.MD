@@ -24,7 +24,7 @@ Expanation of pipeline:
 7. Start LinearRoadRunner for jobtype.
 
 Important env variables.
-$PROJECT DIR- FRINK base dir
-$OUT_OF_ORDER_DIT='out of order generator dir".
+$PROJECT_DIR-FRINK base dir
+$OUT_OF_ORDER_DIR='out of order generator dir".
 
 It is important to have packaged both frink and out of order projects before running the pipeline.

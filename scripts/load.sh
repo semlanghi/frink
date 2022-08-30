@@ -46,7 +46,7 @@ tar -czvf data/lr-preprocessed.tgz data/linear-road-preprocessed.txt
 echo "Preparing config file for OO"
 
 tmp=$(mktemp)
-jq '.outputFilePath = "data/linear-road-"' out_of_order_config > "$tmp" && mv "$tmp" data/ooo_final_config.json
+jq '.outputFilePath = "data/linear-road-"' $out_of_order_config > "$tmp" && mv "$tmp" data/ooo_final_config.json
 jq '.rawFilePath = "data/lr-preprocessed.tgz" ' data/ooo_final_config.json > "$tmp" && mv "$tmp" data/ooo_final_config.json
 
 
