@@ -107,44 +107,4 @@ public class ThresholdWindowing<I> extends FrameWindowing<I>{
         return Arrays.asList(frameState, frameState1);
     }
 
-    @Override
-    public Evictor<I, GlobalWindow> singleBufferEvictor() {
-        return new Evictor<I,GlobalWindow>() {
-
-            private List<TimestampedValue<I>> intermediateValue;
-
-            @Override
-            public void evictBefore(
-                    Iterable<TimestampedValue<I>> elements,
-                    int size,
-                    GlobalWindow window,
-                    EvictorContext evictorContext) {
-            }
-
-            @Override
-            public void evictAfter(
-                    Iterable<TimestampedValue<I>> elements,
-                    int size,
-                    GlobalWindow window,
-                    EvictorContext evictorContext) {
-                try {
-                    for (Iterator<TimestampedValue<I>> itTsValues = elements.iterator(); itTsValues.hasNext();){
-                        itTsValues.next();
-                        itTsValues.remove();
-                    }
-
-
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-            }
-        };
-    }
-
-    @Override
-    public Trigger<I, GlobalWindow> singleBufferTrigger() {
-        return new FrameTrigger();
-    }
-
-
 }

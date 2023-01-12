@@ -154,7 +154,7 @@ public class StateAwareWindowedStream<T, K, W extends Window> extends WindowedSt
                             stateDesc,
                             new InternalIterableWindowFunction<>(new ReduceApplyWindowFunction<>(reduceFunction, function)),
                             visibleTrigger,
-                            30000L,
+                            visibleAllowedLateness,
                             visibleLateDataOutputTag);
         }
 

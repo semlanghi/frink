@@ -31,6 +31,7 @@ import org.apache.flink.shaded.guava18.com.google.common.base.Predicate;
 import org.apache.flink.shaded.guava18.com.google.common.collect.FluentIterable;
 import org.apache.flink.shaded.guava18.com.google.common.collect.Iterables;
 import org.apache.flink.streaming.api.operators.InternalTimer;
+import org.apache.flink.streaming.api.watermark.Watermark;
 import org.apache.flink.streaming.api.windowing.assigners.MergingWindowAssigner;
 import org.apache.flink.streaming.api.windowing.assigners.WindowAssigner;
 import org.apache.flink.streaming.api.windowing.evictors.Evictor;
@@ -114,218 +115,90 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
         final Collection<W> elementWindows = windowAssigner.assignWindows(
                 element.getValue(), element.getTimestamp(), windowAssignerContext);
 
+
         //if element is handled by none of assigned elementWindows
         boolean isSkippedElement = true;
 
         final K key = this.<K>getKeyedStateBackend().getCurrentKey();
 
-        if (windowAssigner instanceof MergingWindowAssigner) {
-            MergingWindowSet<W> mergingWindows = getMergingWindowSet();
 
-            for (W window : elementWindows) {
 
-                // adding the new window might result in a merge, in that case the actualWindow
-                // is the merged window and we work with that. If we don't merge then
-                // actualWindow == window
-                W actualWindow = mergingWindows.addWindow(window,
-                        new MergingWindowSet.MergeFunction<W>() {
-                            @Override
-                            public void merge(W mergeResult,
-                                              Collection<W> mergedWindows, W stateWindowResult,
-                                              Collection<W> mergedStateWindows) throws Exception {
+        if (element.getTimestamp() + allowedLateness <= internalTimerService.currentWatermark())
+            return;
 
-                                if ((windowAssigner.isEventTime() && mergeResult.maxTimestamp() + allowedLateness <= internalTimerService.currentWatermark())) {
-                                    throw new UnsupportedOperationException("The end timestamp of an " +
-                                            "event-time window cannot become earlier than the current watermark " +
-                                            "by merging. Current watermark: " + internalTimerService.currentWatermark() +
-                                            " window: " + mergeResult);
-                                } else if (!windowAssigner.isEventTime() && mergeResult.maxTimestamp() <= internalTimerService.currentProcessingTime()) {
-                                    throw new UnsupportedOperationException("The end timestamp of a " +
-                                            "processing-time window cannot become earlier than the current processing time " +
-                                            "by merging. Current processing time: " + internalTimerService.currentProcessingTime() +
-                                            " window: " + mergeResult);
-                                }
+        // No check on the merging window assigner (WA), being single buffer it uses only GlobalWindows as the WA
+        for (W window : elementWindows) {
 
-                                triggerContext.key = key;
-                                triggerContext.window = mergeResult;
+            // check if the window is already inactive
+            if (isWindowLate(window)) {
+                continue;
+            }
 
-                                triggerContext.onMerge(mergedWindows);
 
-                                for (W m : mergedWindows) {
-                                    triggerContext.window = m;
-                                    triggerContext.clear();
-                                    deleteCleanupTimer(m);
-                                }
+            evictingWindowState.setCurrentNamespace(window);
+            evictingWindowState.add(element);
 
-                                // merge the merged state windows into the newly resulting state window
-                                evictingWindowState.mergeNamespaces(stateWindowResult, mergedStateWindows);
-                            }
-                        });
+            triggerContext.key = key;
+            triggerContext.window = window;
+            evictorContext.key = key;
+            evictorContext.window = window;
 
-                // drop if the window is already late
-                if (isWindowLate(actualWindow)) {
-                    mergingWindows.retireWindow(actualWindow);
-                    continue;
-                }
-                isSkippedElement = false;
+            ComplexTriggerResult complexTriggerResult = this.frameTrigger.onWindow(element.getValue(), element.getTimestamp(), triggerContext);
 
-                W stateWindow = mergingWindows.getStateWindow(actualWindow);
-                if (stateWindow == null) {
-                    throw new IllegalStateException("Window " + window + " is not in in-flight window set.");
-                }
+            Iterable<StreamRecord<IN>> contents = evictingWindowState.get();
+            if (contents == null) {
+                // if we have no state, there is nothing to do
+                continue;
+            }
 
-                evictingWindowState.setCurrentNamespace(stateWindow);
-                evictingWindowState.add(element);
-
-                triggerContext.key = key;
-                triggerContext.window = actualWindow;
-                evictorContext.key = key;
-                evictorContext.window = actualWindow;
-
-                TriggerResult triggerResult = triggerContext.onElement(element);
-
-                Iterable<StreamRecord<IN>> contents = evictingWindowState.get();
-                if (contents == null) {
-                    // if we have no state, there is nothing to do
-                    continue;
-                }
-
-                timestampedCollector.setAbsoluteTimestamp(window.maxTimestamp());
-
-                // Work around type system restrictions...
-                FluentIterable<TimestampedValue<IN>> recordsWithTimestamp = FluentIterable
-                        .from(contents)
-                        .transform(input -> TimestampedValue.from(input));
-
-                Map<CandidateTimeWindow, Iterable<TimestampedValue<IN>>> iterables =
-                        divideGlobalWindow(recordsWithTimestamp, getPartitionedState(new MapStateDescriptor<>("candidateWindows", new LongSerializer(), new FrameState.Serializer())));
-
-                for (CandidateTimeWindow tmp : iterables.keySet()
-                ) {
-                    if (triggerResult.isFire()) {
-                        emitWindowContents(window, iterables.get(tmp), evictingWindowState);
-
-                        //work around to fix FLINK-4369, remove the evicted elements from the windowState.
-                        //this is inefficient, but there is no other way to remove elements from ListState, which is an AppendingState.
-                        evictingWindowState.clear();
-                        for (TimestampedValue<IN> record : recordsWithTimestamp) {
-                            evictingWindowState.add(record.getStreamRecord());
+            // Work around type system restrictions...
+            FluentIterable<TimestampedValue<IN>> recordsWithTimestamp = FluentIterable
+                    .from(contents)
+                    .transform(new Function<StreamRecord<IN>, TimestampedValue<IN>>() {
+                        @Override
+                        public TimestampedValue<IN> apply(StreamRecord<IN> input) {
+                            return TimestampedValue.from(input);
                         }
-                    }
-
-                    if (triggerResult.isPurge()) {
-                        evictingWindowState.clear();
-                    }
-                    registerCleanupTimer(window);
-                }
-            }
-
-            // need to make sure to update the merging state in state
-            mergingWindows.persist();
-        } else {
-            for (W window : elementWindows) {
-
-                // check if the window is already inactive
-                if (isWindowLate(window)) {
-                    continue;
-                }
-                isSkippedElement = false;
-
-                evictingWindowState.setCurrentNamespace(window);
-                evictingWindowState.add(element);
-
-                triggerContext.key = key;
-                triggerContext.window = window;
-                evictorContext.key = key;
-                evictorContext.window = window;
-
-                ComplexTriggerResult complexTriggerResult = this.frameTrigger.onWindow(element.getValue(), element.getTimestamp(), triggerContext);
-
-                Iterable<StreamRecord<IN>> contents = evictingWindowState.get();
-                if (contents == null) {
-                    // if we have no state, there is nothing to do
-                    continue;
-                }
+                    });
 
 
-                
-                timestampedCollector.setAbsoluteTimestamp(window.maxTimestamp());
+//            SortedMap<DataDrivenWindow, ? extends Iterable<TimestampedValue<IN>>> iterables =
+//                    extractData(recordsWithTimestamp, complexTriggerResult.resultWindows);
+//            Iterable<TimestampedValue<IN>> resultAfterEviction = new ArrayList<>();
+//            FluentIterable<TimestampedValue<IN>> fluentResults = FluentIterable.from(resultAfterEviction);
 
-                // Work around type system restrictions...
-                FluentIterable<TimestampedValue<IN>> recordsWithTimestamp = FluentIterable
-                        .from(contents)
-                        .transform(new Function<StreamRecord<IN>, TimestampedValue<IN>>() {
-                            @Override
-                            public TimestampedValue<IN> apply(StreamRecord<IN> input) {
-                                return TimestampedValue.from(input);
-                            }
-                        });
+            SortedMap<DataDrivenWindow, ? extends Iterable<TimestampedValue<IN>>> iterables =
+                    extractData(recordsWithTimestamp, complexTriggerResult.resultWindows);
 
-                //Understood the problem: the iterator for composing the windows take all the elements that there are
-                //How to know which window to fire???
-                // 1st solution: return it through the trigger
-                // 2nd solution: create an internal windowAssigner
-                SortedMap<DataDrivenWindow, ? extends Iterable<TimestampedValue<IN>>> iterables =
-                        extractData(recordsWithTimestamp, complexTriggerResult.resultWindows);
-                Iterable<TimestampedValue<IN>> resultAfterEviction = new ArrayList<>();
-                FluentIterable<TimestampedValue<IN>> fluentResults = FluentIterable.from(resultAfterEviction);
+            // The eviction before the emission of the output is not necessary
 
-
-                for (DataDrivenWindow tmp : iterables.keySet()
-                     ) {
-                    if (complexTriggerResult.internalResult.isFire()) {
-                        //work around to fix FLINK-4369, remove the evicted elements from the windowState.
-                        //this is inefficient, but there is no other way to remove elements from ListState, which is an AppendingState.
-                        fluentResults = fluentResults.append(iterables.get(tmp));
+            for (DataDrivenWindow tmp : complexTriggerResult.resultWindows) {
+                if (complexTriggerResult.internalResult.isFire()) {
+                    if(iterables.containsKey(tmp))
                         emitWindowContents(window, iterables.get(tmp), evictingWindowState);
-
-                    }
                 }
-
-                if (complexTriggerResult.internalResult.isPurge()) {
-                    evictingWindowState.clear();
-                }
-                registerCleanupTimer(window);
-
             }
+
+            // The evictor should take the collections of events, but also the size of the collection
+            // this is not usefult for a time-based eviction. Thus, we pass instead of the size, the allowed lateness
+
+            evictorContext.evictAfter(recordsWithTimestamp, (int) (this.allowedLateness/1000));
+
+
+
+
+//            for (DataDrivenWindow tmp : iterables.keySet()
+//                 ) {
+//                if (complexTriggerResult.internalResult.isFire()) {
+//                    //work around to fix FLINK-4369, remove the evicted elements from the windowState.
+//                    //this is inefficient, but there is no other way to remove elements from ListState, which is an AppendingState.
+//                    fluentResults = fluentResults.append(iterables.get(tmp));
+//                    emitWindowContents(window, iterables.get(tmp), evictingWindowState);
+//
+//                }
+//            }
+
         }
-
-        // side output input event if
-        // element not handled by any window
-        // late arriving tag has been set
-        // windowAssigner is event time and current timestamp + allowed lateness no less than element timestamp
-        if (isSkippedElement && isElementLate(element)) {
-            if (lateDataOutputTag != null){
-                sideOutput(element);
-            } else {
-                this.numLateRecordsDropped.inc();
-            }
-        }
-    }
-
-    private Map<CandidateTimeWindow, Iterable<TimestampedValue<IN>>> divideGlobalWindow(Iterable<TimestampedValue<IN>> collection, MapState<Long, FrameState> mapState){
-        try {
-            List<CandidateTimeWindow> timeWindows = new ArrayList<>();
-            Map<CandidateTimeWindow, Iterable<TimestampedValue<IN>>> internalWindows = new HashMap<>();
-
-            if(mapState.keys()==null)
-                return Collections.emptyMap();
-
-            for (FrameState timeWindow : mapState.values()) {
-                FluentIterable<TimestampedValue<IN>> fluentIterable = FluentIterable
-                        .from(collection)
-                        .filter(new Predicate<TimestampedValue<IN>>() {
-                            @Override
-                            public boolean apply(@Nullable TimestampedValue<IN> inStreamRecord) {
-                                assert inStreamRecord != null;
-                                return inStreamRecord.getTimestamp() >= timeWindow.getTsStart() && inStreamRecord.getTimestamp() <= timeWindow.getTsEnd() - 1;
-                            }
-                        });
-                internalWindows.put(new CandidateTimeWindow(timeWindow.getTsStart(), timeWindow.getTsEnd(), timeWindow.isClosed()), fluentIterable);
-            } return internalWindows;
-        } catch (Exception e) {
-            e.printStackTrace();
-        } return Collections.emptyMap();
     }
 
     /**
@@ -336,7 +209,7 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
      */
     private SortedMap<DataDrivenWindow, ? extends Iterable<TimestampedValue<IN>>> extractData(Iterable<TimestampedValue<IN>> resultCollection, Collection<DataDrivenWindow> resultWindows){
 
-        SortedMap<DataDrivenWindow, List<TimestampedValue<IN>>> internalWindows = new TreeMap<>(Comparator.comparingLong(DataDrivenWindow::getStart));
+        SortedMap<DataDrivenWindow, List<TimestampedValue<IN>>> internalWindows = new TreeMap<>(Comparator.comparingLong(DataDrivenWindow::getEnd));
         resultCollection.forEach(inTimestampedValue -> resultWindows.stream()
                 .filter(window -> window.getStart()<=inTimestampedValue.getTimestamp() && window.getEnd()> inTimestampedValue.getTimestamp())
                 .findFirst()
@@ -447,10 +320,6 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
 
         FluentIterable<TimestampedValue<IN>> fluentIterable = FluentIterable.from(contents);
 
-        evictorContext.evictBefore(fluentIterable, Iterables.size(contents));
-
-
-
         FluentIterable<IN> projectedContents = fluentIterable
                 .transform(new Function<TimestampedValue<IN>, IN>() {
                     @Override
@@ -463,7 +332,6 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
 
         processContext.window = triggerContext.window;
         userFunction.process(triggerContext.key, triggerContext.window, processContext, projectedContents, timestampedCollector);
-//        evictorContext.evictAfter(fluentIterable, Iterables.size(contents));
     }
 
     private void clearAllState(
@@ -515,12 +383,8 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
             return key;
         }
 
-        void evictBefore(Iterable<TimestampedValue<IN>> elements, int size) {
-            evictor.evictBefore((Iterable) elements, size, window, this);
-        }
-
-        void evictAfter(Iterable<TimestampedValue<IN>>  elements, int size) {
-            evictor.evictAfter((Iterable) elements, size, window, this);
+        void evictAfter(Iterable<TimestampedValue<IN>>  elements, int allowedLateness) {
+            evictor.evictAfter((Iterable) elements, allowedLateness, window, this);
         }
     }
 

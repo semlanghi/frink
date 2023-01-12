@@ -200,35 +200,6 @@ public class DeltaWindowing<I> extends FrameWindowing<I> {
     }
 
 
-    @Override
-    public Evictor<I, GlobalWindow> singleBufferEvictor() {
-        return new Evictor<I,GlobalWindow>() {
-            @Override
-            public void evictBefore(
-                    Iterable<TimestampedValue<I>> elements,
-                    int size,
-                    GlobalWindow window,
-                    EvictorContext evictorContext) {
-            }
-
-            @Override
-            public void evictAfter(
-                    Iterable<TimestampedValue<I>> elements,
-                    int size,
-                    GlobalWindow window,
-                    EvictorContext evictorContext) {
-                try {
-                    for (Iterator<TimestampedValue<I>> itTsValues = elements.iterator(); itTsValues.hasNext();){
-                        itTsValues.next();
-                        itTsValues.remove();
-                    }
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-            }
-        };
-    }
-
 
 
 

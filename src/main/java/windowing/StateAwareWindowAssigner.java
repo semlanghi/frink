@@ -35,5 +35,8 @@ public abstract class StateAwareWindowAssigner<T,W extends Window> extends Mergi
 
         public abstract Iterable<StreamRecord<T>> getContent(W window);
 
+        public abstract long getCurrentWatermark();
+
+        public abstract long getAllowedLateness();
     }
 }

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+export _JAVA_OPTIONS="-Xmx1g"
+export KAFKA_HOME="/Users/samuelelanghi/Documents/platforms/confluent-6.2.0"
 
 if [ -z "$KAFKA_HOME" ]
 then
@@ -9,7 +11,7 @@ fi
 
 # stop zookeeper
 echo "Stopping zookeeper"
-$KAFKA_HOME/bin/zookeeper-server-stop.sh $KAFKA_HOME/config/zookeeper.properties & sleep 5
+$KAFKA_HOME/bin/zookeeper-server-stop $KAFKA_HOME/config/zookeeper.properties & sleep 5
 
 #clean logs:
 echo "Cleaning zookeeper folders from /tmp"

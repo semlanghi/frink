@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-export KAFKA_HOME="/home/ekeshi/kafka_2.13-3.2.0"
+export _JAVA_OPTIONS="-Xmx1g"
+export KAFKA_HOME="/Users/samuelelanghi/Documents/platforms/confluent-6.2.0"
 
 if [ -z "$KAFKA_HOME" ]
 then
@@ -17,7 +18,7 @@ fi
 
 # stop broker
 echo "Stopping broker"
-$KAFKA_HOME/bin/kafka-server-stop.sh
+$KAFKA_HOME/bin/kafka-server-stop
 
 
 rm -rf /tmp/kafka-logs*;

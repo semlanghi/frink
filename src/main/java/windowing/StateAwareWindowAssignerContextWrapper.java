@@ -31,4 +31,14 @@ public class StateAwareWindowAssignerContextWrapper<T, W extends Window> impleme
     public Iterable<StreamRecord<T>> getContent(W window) {
         return internalContext.getContent(window);
     }
+
+    @Override
+    public long getCurrentWatermark() {
+        return internalContext.getCurrentWatermark();
+    }
+
+    @Override
+    public long getAllowedLateness() {
+        return internalContext.getAllowedLateness();
+    }
 }

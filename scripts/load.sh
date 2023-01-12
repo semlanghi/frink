@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
 #export _JAVA_OPTIONS="-Xmx10g"
+export PROJECT_DIR="/Users/samuelelanghi/Documents/projects/frink"
+export OUT_OF_ORDER_DIR="/Users/samuelelanghi/Documents/projects/out-of-order-datagenerator"
 
 
 bootstrap=$1 #server and port kafka is running
@@ -12,7 +14,7 @@ out_of_order_config=$6
 
 if [ -z "$KAFKA_HOME" ]
 then
-      KAFKA_HOME="/root/platforms/confluent-5.3.1"
+      KAFKA_HOME="/Users/samuelelanghi/Documents/platforms/confluent-6.2.0"
 else
       echo "KAFKA_HOME is $KAFKA_HOME"
 fi
@@ -66,8 +68,8 @@ java -Xmx2g -cp $PROJECT_DIR/target/frink-1.0-SNAPSHOT.jar linearroad.dataproces
 
 # Setup topic
 echo "Setting up the topic $topic"
-$KAFKA_HOME/bin/kafka-topics.sh --delete --bootstrap-server localhost:9092 --topic "$topic" --if-exists
-$KAFKA_HOME/bin/kafka-topics.sh --create --bootstrap-server localhost:9092 --replication-factor 1 --partitions 1 --topic "$topic"
+$KAFKA_HOME/bin/kafka-topics --delete --bootstrap-server localhost:9092 --topic "$topic" --if-exists
+$KAFKA_HOME/bin/kafka-topics --create --bootstrap-server localhost:9092 --replication-factor 1 --partitions 1 --topic "$topic"
 sleep 3
 
 # Execute producer

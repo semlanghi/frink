@@ -15,4 +15,9 @@ public interface StateAwareContextWrapper<T, W extends Window> {
     public MapState<Long, FrameState> getPastFrameState(MapStateDescriptor<Long, FrameState> stateDescriptor);
 
     public Iterable<StreamRecord<T>> getContent(W window);
+
+
+    public abstract long getCurrentWatermark();
+
+    public abstract long getAllowedLateness();
 }

@@ -31,4 +31,14 @@ public class StateAwareTriggerContextWrapper<T, W extends Window> implements Sta
     public Iterable<StreamRecord<T>> getContent(W window) {
         return internalContext.getContent(window);
     }
+
+    @Override
+    public long getCurrentWatermark() {
+        return internalContext.getCurrentWatermark();
+    }
+
+    @Override
+    public long getAllowedLateness() {
+        return 0;
+    }
 }

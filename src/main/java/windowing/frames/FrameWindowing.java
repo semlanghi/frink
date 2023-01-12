@@ -37,6 +37,7 @@ import org.apache.flink.streaming.api.windowing.triggers.TriggerResult;
 import org.apache.flink.streaming.api.windowing.windows.GlobalWindow;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.streaming.api.windowing.windows.Window;
+import org.apache.flink.streaming.runtime.operators.windowing.TimestampedValue;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import windowing.*;
 import windowing.windows.CandidateTimeWindow;
@@ -104,6 +105,14 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
             ValueState<FrameState> currentFrameState = context.getCurrentFrameState(frameStateDescriptor);
             FrameState frameState = currentFrameState.value();
 
+            Iterator<Map.Entry<Long, FrameState>> iterator = candidateWindowsState.iterator();
+
+            if (iterator!=null)
+                while (iterator.hasNext()){
+                    Map.Entry<Long, FrameState> next = iterator.next();
+                    if (next.getValue().getTsEnd() + context.getAllowedLateness()  <= context.getCurrentWatermark() && next.getValue().isClosed())
+                        iterator.remove();
+                }
 
 
             if(frameState==null)
@@ -152,6 +161,8 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
                     }
                 }
             }
+
+
 
         } catch (Exception e) {
             e.printStackTrace();
@@ -392,7 +403,35 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
     }
 
     @Override
-    public abstract Evictor<I, GlobalWindow> singleBufferEvictor();
+    public Evictor<I, GlobalWindow> singleBufferEvictor() {
+        return new Evictor<I, GlobalWindow>() {
+            @Override
+            public void evictBefore(
+                    Iterable<TimestampedValue<I>> elements,
+                    int size,
+                    GlobalWindow window,
+                    EvictorContext evictorContext) {
+
+            }
+
+            @Override
+            public void evictAfter(
+                    Iterable<TimestampedValue<I>> elements,
+                    int allowedLateness,
+                    GlobalWindow window,
+                    EvictorContext evictorContext) {
+                try {
+                    for (Iterator<TimestampedValue<I>> itTsValues = elements.iterator(); itTsValues.hasNext();){
+                        TimestampedValue<I> next = itTsValues.next();
+                        if(next.getTimestamp() + allowedLateness * 1000L <= evictorContext.getCurrentWatermark())
+                            itTsValues.remove();
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+        };
+    }
 
     @Override
     public Trigger<I, GlobalWindow> singleBufferTrigger(){
@@ -488,7 +527,7 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
 
 
             if(stillOpenWindow!=null) {
-                Iterator<CandidateTimeWindow> candidateTimeWindowIterator = processFrames(stillOpenWindow.getStart(), -1, stateAwareContextWrapper);
+                Iterator<CandidateTimeWindow> candidateTimeWindowIterator = recomputeFrames(stillOpenWindow.getStart(), stateAwareContextWrapper);
 
                 while (candidateTimeWindowIterator.hasNext()) {
                     CandidateTimeWindow candidateTimeWindow = candidateTimeWindowIterator.next();

@@ -259,6 +259,16 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
             }
 
             @Override
+            public long getCurrentWatermark() {
+                return StateAwareMultiBufferWindowOperator.this.internalTimerService.currentWatermark();
+            }
+
+            @Override
+            public long getAllowedLateness() {
+                return StateAwareMultiBufferWindowOperator.this.allowedLateness;
+            }
+
+            @Override
             public long getCurrentProcessingTime() {
                 return System.currentTimeMillis();
             }
@@ -320,6 +330,7 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
 
     @Override
     public void processElement(StreamRecord<IN> element) throws Exception {
+        //SCOPE
         final Collection<W> elementWindows = windowAssigner.assignWindows(
                 element.getValue(), element.getTimestamp(), windowAssignerContext);
 
@@ -397,7 +408,7 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
 
                 windowState.setCurrentNamespace(stateWindow);
 
-                //Added this condition since for frames events that triggers a window may not belong to it
+                //Added the precondition since, for frames, events that triggers a window may not belong to it
                 if(windowMatcher.test(element, actualWindow) && !ooo){
                     windowState.add(element);
                 }
@@ -424,7 +435,6 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
 
 
                 //PURGING
-                // TODO: reduce the clean up timer instead
                 if(candidateWindowState.get(((TimeWindow)actualWindow).getStart()).isClosed()){
 //                    candidateWindowState.remove(((TimeWindow)actualWindow).getStart());
 //                    clearAllState(triggerContext.window, windowState, mergingWindows);
@@ -482,7 +492,6 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
     private void outOfOrderProcessing(StreamRecord<IN> element, K key, boolean elementInserted, Collection<W> currentWindows,
                                       SplittingMergingWindowSet<W,Long> mergingWindows, Set<W> recomputedWindowsAccumulator) throws Exception {
 
-        //TODO: Fix redundancy in the addition of multiple windows
         recomputedWindowsAccumulator.addAll(currentWindows);
 
         if (currentWindows.stream()
