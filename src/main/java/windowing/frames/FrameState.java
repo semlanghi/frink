@@ -11,7 +11,6 @@ import java.io.Serializable;
 
 public class FrameState implements Serializable {
 
-    // TODO: Convert this class into a gateway class towards the State Backend, it is more efficient, you don't have to (de)serialize the whole state
     private long count;
     private long tsStart;
     private long tsEnd;

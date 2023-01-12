@@ -27,7 +27,6 @@ import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import java.util.*;
 import java.util.function.ToLongFunction;
 
-//TODO: Fix problem in the evaluation
 public class ThresholdWindowing<I> extends FrameWindowing<I>{
 
     private final int min = 0;
@@ -82,7 +81,6 @@ public class ThresholdWindowing<I> extends FrameWindowing<I>{
 
     @Override
     protected Collection<FrameState> processOutOfOrder(long ts, long arg, FrameState rebuildingFrameState, Iterable<StreamRecord<I>> iterable) throws Exception {
-        //TODO : Fix this artificial solutions
         if (closePred(arg, rebuildingFrameState)){
            FrameState frameState = FrameState.initializeFrameState(rebuildingFrameState.getTsStart(), ts, true);
            frameState.increment(); // This
@@ -97,7 +95,6 @@ public class ThresholdWindowing<I> extends FrameWindowing<I>{
 
     @Override
     protected Collection<FrameState> recomputeOutOfOrder(long ts, FrameState rebuildingFrameState, Iterable<StreamRecord<I>> iterable) throws Exception {
-        //TODO : Fix this artificial solutions
 
         FrameState frameState = FrameState.initializeFrameState(rebuildingFrameState.getTsStart(), ts, true);
         frameState.increment(); // This

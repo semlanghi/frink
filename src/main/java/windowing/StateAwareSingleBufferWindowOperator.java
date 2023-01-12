@@ -429,6 +429,10 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
             } return null;
         }
 
+        public long getAllowedLateness(){
+            return allowedLateness;
+        }
+
 
         /**
          * NB: I will use this method to check the trigger on the window, NOT on the processing time

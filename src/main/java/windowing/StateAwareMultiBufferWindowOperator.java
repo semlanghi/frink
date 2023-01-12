@@ -285,13 +285,7 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
         if (windowState instanceof InternalMergingState) {
             windowMergingState = new SplittingHeapListState<>((InternalMergingState<K, W, StreamRecord<IN>, List<StreamRecord<IN>>, Iterable<StreamRecord<IN>>>) windowState);
         }
-        // TODO this sanity check should be here, but is prevented by an incorrect test (pending validation)
-        // TODO see WindowOperatorTest.testCleanupTimerWithEmptyFoldingStateForSessionWindows()
-        // TODO activate the sanity check once resolved
-//			else if (windowState != null) {
-//				throw new IllegalStateException(
-//						"The window uses a merging assigner, but the window state is not mergeable.");
-//			}
+
 
         @SuppressWarnings("unchecked")
         final Class<Tuple2<W, W>> typedTuple = (Class<Tuple2<W, W>>) (Class<?>) Tuple2.class;

@@ -75,7 +75,6 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
     @Override
     public Collection<DataDrivenWindow> assignWindows(I element, long timestamp, WindowAssigner.WindowAssignerContext context) {
 
-        // TODO: Add an eviction policy for the windows
         Iterator<CandidateTimeWindow> candidateTimeWindowIterator;
 
         if(element == null){
@@ -207,7 +206,6 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
     private Iterable<StreamRecord<I>> checkEventsContainment(Iterable<StreamRecord<I>> iterable, DataDrivenWindow dataDrivenWindow) {
         List<StreamRecord<I>> checkedEvents = new ArrayList<>();
         iterable.forEach(iStreamRecord -> {
-            //TODO: FIX THIS! The window does not have access to the events of the next one, that is why the OutOfOrder Processing method goes infinite, since it cannot close the window
             if (dataDrivenWindow.getStart()<=iStreamRecord.getTimestamp() && dataDrivenWindow.getEnd()> iStreamRecord.getTimestamp())
                 checkedEvents.add(iStreamRecord);
         });
@@ -346,7 +344,6 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
             FrameState coveringFrameState = FrameState.initializeFrameState(insertedWindow.getStart(), insertedWindow.getEnd(), insertedWindow.isClosed(), 0L);
 
 
-            //TODO: Specialize this method across all classes
             StreamSupport.stream(candidateWindowsState.entries().spliterator(), false)
                     .filter(longFrameStateEntry -> longFrameStateEntry.getValue().getTsStart() >= coveringFrameState.getTsStart() && longFrameStateEntry.getValue().getTsEnd() <= coveringFrameState.getTsEnd())
                     .forEach(w -> {
@@ -474,10 +471,6 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
     }
 
     public class FrameTrigger extends Trigger<I, GlobalWindow> {
-
-        //TODO: Add nested singleBufferTrigger for SECRET reporting variations
-        //TODO: Modify the generics for being a DataDrivenWindow, this way you can define the onProcessingMethod
-        //TODO: as a trigger on the window
 
         public FrameTrigger() {
         }

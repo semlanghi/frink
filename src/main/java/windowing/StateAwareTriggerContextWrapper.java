@@ -39,6 +39,6 @@ public class StateAwareTriggerContextWrapper<T, W extends Window> implements Sta
 
     @Override
     public long getAllowedLateness() {
-        return 0;
+        return internalContext.getAllowedLateness();
     }
 }
