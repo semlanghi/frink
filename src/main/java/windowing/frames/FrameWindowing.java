@@ -597,6 +597,7 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
                                       long timestamp,
                                       TriggerContext ctx){
 
+            //TODO: SB Scope Start
             long elementLong = toLongFunctionValue.applyAsLong(element);
 
             StateAwareContextWrapper<I,DataDrivenWindow> stateAwareContextWrapper = new StateAwareTriggerContextWrapper<>(ctx);
@@ -615,11 +616,14 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
             }else{
                 definitiveElementWindows.addAll(finalWindows);
             }
+            //TODO: SB Scope End
 
+            //TODO: SB Report Start
             //Pre-filter: in case no windows is available, optimization, without going to the singleBufferEvictor
             if(!definitiveElementWindows.isEmpty()){
                 return new ComplexTriggerResult(TriggerResult.FIRE, definitiveElementWindows);
             } return new ComplexTriggerResult(TriggerResult.CONTINUE, Collections.emptyList());
+            //TODO: SB Report End
         }
 
         @Override

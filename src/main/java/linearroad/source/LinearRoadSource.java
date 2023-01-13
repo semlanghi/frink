@@ -15,9 +15,6 @@ public class LinearRoadSource implements SourceFunction<SpeedEvent> {
     private boolean running = true;
     private String filePath;
     private int numRecordsToEmit=Integer.MAX_VALUE;
-    public LinearRoadSource(String filePath) {
-        this.filePath = filePath;
-    }
 
     public LinearRoadSource(String filePath, int numRecordsToEmit)
     {
@@ -27,19 +24,17 @@ public class LinearRoadSource implements SourceFunction<SpeedEvent> {
 
 
     @Override
-    public void run(SourceContext<SpeedEvent> sourceContext) throws Exception {
+    public void run(SourceContext<SpeedEvent> sourceContext) {
         try {
             int recordsEmitted=0;
             BufferedReader reader;
+
+            //
             if (filePath.startsWith("http")) {
                 URL url = new URL(filePath);
                 InputStreamReader is = new InputStreamReader(url.openStream());
-
-//            BufferedReader reader = new BufferedReader(new FileReader(filePath));
                 reader = new BufferedReader(is);
-            }
-            else
-            {
+            } else {
                 reader = new BufferedReader(new FileReader(filePath));
             }
             String line;

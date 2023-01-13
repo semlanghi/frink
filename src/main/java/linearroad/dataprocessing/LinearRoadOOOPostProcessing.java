@@ -6,6 +6,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 
+
 public class LinearRoadOOOPostProcessing {
 
     public static void main(String[] args) throws IOException {
@@ -27,19 +28,17 @@ public class LinearRoadOOOPostProcessing {
             line = line.substring(0, line.length()-1);
             String[] lineParts = line.split(","); //remove starting [
 
-            String str;
-                    try {
-                        str = toLinearRoadOriginalRow(lineParts);
-                        writer.write(toLinearRoadOriginalRow(lineParts));
-                        writer.newLine();
-                        line = reader.readLine();
-                        c++;
-                        if(c%1000000==0){
-                            System.out.println(c);
-                        }
-                    } catch (Exception e){
-                        System.err.println(line);
-                    }
+            try {
+                writer.write(toLinearRoadOriginalRow(lineParts));
+                writer.newLine();
+                line = reader.readLine();
+                c++;
+                if(c%1000000==0){
+                    System.out.println(c);
+                }
+            } catch (Exception e){
+                System.err.println(line);
+            }
 
         }
 

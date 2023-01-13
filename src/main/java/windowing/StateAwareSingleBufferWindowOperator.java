@@ -112,93 +112,70 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
 
     @Override
     public void processElement(StreamRecord<IN> element) throws Exception {
+        //This operation is not really necessary, as the window returned is always the GlobalWindow
         final Collection<W> elementWindows = windowAssigner.assignWindows(
                 element.getValue(), element.getTimestamp(), windowAssignerContext);
 
-
-        //if element is handled by none of assigned elementWindows
-        boolean isSkippedElement = true;
-
         final K key = this.<K>getKeyedStateBackend().getCurrentKey();
-
-
 
         if (element.getTimestamp() + allowedLateness <= internalTimerService.currentWatermark())
             return;
 
         // No check on the merging window assigner (WA), being single buffer it uses only GlobalWindows as the WA
-        for (W window : elementWindows) {
+        // N.B.: Always one window, i.e., the Global Window
+        W window = elementWindows.iterator().next();
 
-            // check if the window is already inactive
-            if (isWindowLate(window)) {
-                continue;
-            }
+        //TODO: SB ADD Start
+        evictingWindowState.setCurrentNamespace(window);
+        evictingWindowState.add(element);
+        //TODO: SB ADD End
 
-
-            evictingWindowState.setCurrentNamespace(window);
-            evictingWindowState.add(element);
-
-            triggerContext.key = key;
-            triggerContext.window = window;
-            evictorContext.key = key;
-            evictorContext.window = window;
-
-            ComplexTriggerResult complexTriggerResult = this.frameTrigger.onWindow(element.getValue(), element.getTimestamp(), triggerContext);
-
-            Iterable<StreamRecord<IN>> contents = evictingWindowState.get();
-            if (contents == null) {
-                // if we have no state, there is nothing to do
-                continue;
-            }
-
-            // Work around type system restrictions...
-            FluentIterable<TimestampedValue<IN>> recordsWithTimestamp = FluentIterable
-                    .from(contents)
-                    .transform(new Function<StreamRecord<IN>, TimestampedValue<IN>>() {
-                        @Override
-                        public TimestampedValue<IN> apply(StreamRecord<IN> input) {
-                            return TimestampedValue.from(input);
-                        }
-                    });
+        triggerContext.key = key;
+        triggerContext.window = window;
+        evictorContext.key = key;
+        evictorContext.window = window;
 
 
-//            SortedMap<DataDrivenWindow, ? extends Iterable<TimestampedValue<IN>>> iterables =
-//                    extractData(recordsWithTimestamp, complexTriggerResult.resultWindows);
-//            Iterable<TimestampedValue<IN>> resultAfterEviction = new ArrayList<>();
-//            FluentIterable<TimestampedValue<IN>> fluentResults = FluentIterable.from(resultAfterEviction);
+        ComplexTriggerResult complexTriggerResult = this.frameTrigger.onWindow(element.getValue(), element.getTimestamp(), triggerContext);
 
-            SortedMap<DataDrivenWindow, ? extends Iterable<TimestampedValue<IN>>> iterables =
-                    extractData(recordsWithTimestamp, complexTriggerResult.resultWindows);
-
-            // The eviction before the emission of the output is not necessary
-
-            for (DataDrivenWindow tmp : complexTriggerResult.resultWindows) {
-                if (complexTriggerResult.internalResult.isFire()) {
-                    if(iterables.containsKey(tmp))
-                        emitWindowContents(window, iterables.get(tmp), evictingWindowState);
-                }
-            }
-
-            // The evictor should take the collections of events, but also the size of the collection
-            // this is not usefult for a time-based eviction. Thus, we pass instead of the size, the allowed lateness
-
-            evictorContext.evictAfter(recordsWithTimestamp, (int) (this.allowedLateness/1000));
-
-
-
-
-//            for (DataDrivenWindow tmp : iterables.keySet()
-//                 ) {
-//                if (complexTriggerResult.internalResult.isFire()) {
-//                    //work around to fix FLINK-4369, remove the evicted elements from the windowState.
-//                    //this is inefficient, but there is no other way to remove elements from ListState, which is an AppendingState.
-//                    fluentResults = fluentResults.append(iterables.get(tmp));
-//                    emitWindowContents(window, iterables.get(tmp), evictingWindowState);
-//
-//                }
-//            }
-
+        //TODO: SB Content Start
+        Iterable<StreamRecord<IN>> contents = evictingWindowState.get();
+        if (contents == null) {
+            // if we have no state, there is nothing to do
+            return;
         }
+
+        // Work around type system restrictions...
+        FluentIterable<TimestampedValue<IN>> recordsWithTimestamp = FluentIterable
+                .from(contents)
+                .transform(new Function<StreamRecord<IN>, TimestampedValue<IN>>() {
+                    @Override
+                    public TimestampedValue<IN> apply(StreamRecord<IN> input) {
+                        return TimestampedValue.from(input);
+                    }
+                });
+
+        SortedMap<DataDrivenWindow, ? extends Iterable<TimestampedValue<IN>>> iterables =
+                extractData(recordsWithTimestamp, complexTriggerResult.resultWindows);
+        //TODO: SB Content End
+
+        // The eviction before the emission of the output is not necessary
+
+        for (DataDrivenWindow tmp : complexTriggerResult.resultWindows) {
+            if (complexTriggerResult.internalResult.isFire()) {
+                if(iterables.containsKey(tmp))
+                    emitWindowContents(window, iterables.get(tmp), evictingWindowState);
+            }
+        }
+
+        // The evictor should take the collections of events, but also the size of the collection
+        // this is not usefult for a time-based eviction. Thus, we pass instead of the size, the allowed lateness
+
+        //TODO: SB Evict Start
+        evictorContext.evictAfter(recordsWithTimestamp, (int) (this.allowedLateness/1000));
+        //TODO: SB Evict End
+
+
     }
 
     /**

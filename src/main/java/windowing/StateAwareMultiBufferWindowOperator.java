@@ -324,9 +324,10 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
 
     @Override
     public void processElement(StreamRecord<IN> element) throws Exception {
-        //SCOPE
+        //TODO: MB SCOPE Start
         final Collection<W> elementWindows = windowAssigner.assignWindows(
                 element.getValue(), element.getTimestamp(), windowAssignerContext);
+
 
         //if element is handled by none of assigned elementWindows
         boolean isSkippedElement = true;
@@ -346,6 +347,7 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
                 definitiveElementWindows.addAll(elementWindows);
             }
 
+
             for (W window: definitiveElementWindows
                     .stream()
                     .sorted(Comparator.comparingLong(Window::maxTimestamp))
@@ -354,6 +356,7 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
                 // adding the new window might result in a merge, in that case the actualWindow
                 // is the merged window and we work with that. If we don't merge then
                 // actualWindow == window
+                //TODO: MB MERGE Start (1st Part)
                 W actualWindow = mergingWindows.addWindow(window, new SplittingMergingWindowSet.MergeFunction<W>() {
                     @Override
                     public void merge(W mergeResult,
@@ -387,6 +390,8 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
                         windowMergingState.mergeNamespaces(stateWindowResult, mergedStateWindows);
                     }
                 });
+                //TODO: MB MERGE End (1st Part)
+                //TODO: MB SCOPE End
 
                  // drop if the window is already late
                 if (isWindowLate(actualWindow)) {
@@ -395,6 +400,7 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
                 }
                 isSkippedElement = false;
 
+                //TODO: MB ADD Start
                 W stateWindow = mergingWindows.getStateWindow(actualWindow);
                 if (stateWindow == null) {
                     throw new IllegalStateException("Window " + window + " is not in in-flight window set.");
@@ -406,18 +412,23 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
                 if(windowMatcher.test(element, actualWindow) && !ooo){
                     windowState.add(element);
                 }
+                //TODO: MB ADD End
 
 
+                //TODO: MB REPORT Start
                 triggerContext.key = key;
                 triggerContext.window = actualWindow;
 
                 TriggerResult triggerResult = triggerContext.onElement(element);
+                //TODO: MB REPORT End
 
                 if (triggerResult.isFire()) {
+                    //TODO: MB CONTENT Start
                     ACC contents = (ACC) windowState.get();
                     if (contents == null) {
                         continue;
                     }
+                    //TODO: MB CONTENT End
                     emitWindowContents(actualWindow, contents);
                 }
 
@@ -427,13 +438,14 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
 
                 MapState<Long, FrameState> candidateWindowState = getPartitionedState(new MapStateDescriptor<>("candidateWindows", new LongSerializer(), new FrameState.Serializer()));
 
-
+                //TODO: MB EVICT Start (1st Part)
                 //PURGING
                 if(candidateWindowState.get(((TimeWindow)actualWindow).getStart()).isClosed()){
 //                    candidateWindowState.remove(((TimeWindow)actualWindow).getStart());
 //                    clearAllState(triggerContext.window, windowState, mergingWindows);
                     registerCleanupTimer(actualWindow);
                 }
+                //TODO: MB EVICT End (1st Part)
             }
 
             // need to make sure to update the merging state in state
@@ -491,16 +503,21 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
         if (currentWindows.stream()
                 .allMatch(w -> (w instanceof DataDrivenWindow))) {
 
+            //TODO: SPLIT Start
             // First the window is splitted both in the StateWindow Backend and the MerginWindow Backend
             windowSplit(currentWindows, mergingWindows, false);
+            //TODO: SPLIT End
 
             if(!elementInserted){
                 insertElement(element, currentWindows, mergingWindows);
                 elementInserted = true;
             }
 
+            //TODO: MERGE Start (2nd Part)
             // Then the merge operation is computed
             long recomputationTime = windowMerge(key, currentWindows, mergingWindows);
+            //TODO: MERGE End (2nd Part)
+
 
             // followed by a recomputation in the scope, checking first that there exists a recomputation time (!=-1)
             Collection<W> recomputedWindows = Collections.emptyList();
@@ -515,7 +532,9 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
                 if(!recomputedWindows.stream().filter(w -> ((DataDrivenWindow)w).isClosed()).collect(Collectors.toSet()).contains(maximumWindowOfCurrentIteration.get())){
                     outOfOrderProcessing(element, key, elementInserted, recomputedWindows, mergingWindows, recomputedWindowsAccumulator);
                 }else{
+                    //TODO: SPLIT Start
                     windowSplit(recomputedWindows, mergingWindows, true);
+                    //TODO: SPLIT End
                 }
             }
         }
@@ -651,6 +670,7 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
             windowState.clear();
         }
 
+        //TODO: EVICT Start (2nd Part)
         if (windowAssigner.isEventTime() && isCleanupTime(triggerContext.window, timer.getTimestamp())) {
             clearAllState(triggerContext.window, (AppendingState<IN, ACC>) windowState, mergingWindows);
         }
@@ -659,6 +679,7 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
             // need to make sure to update the merging state in state
             mergingWindows.persist();
         }
+        //TODO: EVICT End (2nd Part)
     }
 
     @Override
