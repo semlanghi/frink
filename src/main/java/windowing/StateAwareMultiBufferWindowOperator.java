@@ -169,6 +169,8 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
 
     protected transient InternalTimerService<W> internalTimerService;
 
+    final OutputTag<String> outputTag = new OutputTag<String>("latency"){};
+
     /**
      * Creates a new {@code WindowOperator} based on the given policies and user functions.
      */
@@ -325,6 +327,9 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
     @Override
     public void processElement(StreamRecord<IN> element) throws Exception {
         //TODO: MB SCOPE Start
+        //Ahmed Awad
+        Long start = System.nanoTime();
+//        System.out.print("Scope start "+ System.currentTimeMillis() + "-");
         final Collection<W> elementWindows = windowAssigner.assignWindows(
                 element.getValue(), element.getTimestamp(), windowAssignerContext);
 
@@ -392,7 +397,10 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
                 });
                 //TODO: MB MERGE End (1st Part)
                 //TODO: MB SCOPE End
-
+                //Ahmed Awad
+//                System.out.println("scope "+ (System.nanoTime() - start));
+//                this.processContext.output(outputTag, "scope "+ (System.nanoTime() - start));
+                this.output.collect(outputTag,new StreamRecord<String>("scope "+ (System.nanoTime() - start)));
                  // drop if the window is already late
                 if (isWindowLate(actualWindow)) {
                     mergingWindows.retireWindow(actualWindow);

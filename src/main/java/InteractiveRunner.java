@@ -16,6 +16,7 @@ import org.apache.flink.streaming.api.functions.source.SourceFunction;
 import org.apache.flink.streaming.api.functions.windowing.PassThroughWindowFunction;
 import org.apache.flink.streaming.api.watermark.Watermark;
 import org.apache.flink.streaming.api.windowing.time.Time;
+import org.apache.flink.util.OutputTag;
 import windowing.ExtendedKeyedStream;
 
 
@@ -31,6 +32,8 @@ public class InteractiveRunner {
     private static final int ALLOWED_LATENESS = 5;
 
     public static void main(String[] args) throws Exception {
+
+        final OutputTag<String> outputTag = new OutputTag<String>("latency"){};
 
         // Configuration Creation
         Configuration conf = new Configuration();
@@ -91,6 +94,8 @@ public class InteractiveRunner {
                         TypeInformation.of(SpeedEvent.class));
             else throw new IllegalFormatFlagsException("No valid frame specified.");
 
+            DataStream<String> latencyStream = speedEventDataStreamSink.getSideOutput(outputTag);
+            latencyStream.writeAsText("./src/main/resources/output-" + JOB_TYPE + "_alternative" + " parallelism " + streamExecutionEnvironment.getParallelism() + " - latency" , FileSystem.WriteMode.OVERWRITE);
             speedEventDataStreamSink.writeAsText("./src/main/resources/output-" + JOB_TYPE + "_alternative" + " parallelism " + streamExecutionEnvironment.getParallelism() , FileSystem.WriteMode.OVERWRITE);
             streamExecutionEnvironment.execute(JOB_TYPE);
         }else if(JOB_TYPE.startsWith("frame_single_")) {
