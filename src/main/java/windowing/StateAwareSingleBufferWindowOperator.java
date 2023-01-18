@@ -166,7 +166,7 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
         {
             count++;
         }
-        stateSize.append("stateSize="+count+",");
+        latency.append("stateSize="+count+",");
         // The eviction before the emission of the output is not necessary
 
         for (DataDrivenWindow tmp : complexTriggerResult.resultWindows) {
