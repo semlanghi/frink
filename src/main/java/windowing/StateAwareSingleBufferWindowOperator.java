@@ -146,6 +146,14 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
             return;
         }
 
+        long count =0;
+        for (Object obj : contents)
+        {
+            count++;
+        }
+        latency.append("stateSize="+count+",");
+        latency.append("SB_StateSizing_End=" + System.nanoTime() + ",");
+
         // Work around type system restrictions...
         FluentIterable<TimestampedValue<IN>> recordsWithTimestamp = FluentIterable
                 .from(contents)
@@ -161,12 +169,7 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
         //TODO: SB Content End
         latency.append("SB_Content_End="+System.nanoTime()+",");
         //Ahmed: Will do the iteration to compute the state here to avoid affecting the latency of content delivery
-        long count =0;
-        for (Object obj : contents)
-        {
-            count++;
-        }
-        latency.append("stateSize="+count+",");
+
         // The eviction before the emission of the output is not necessary
 
         for (DataDrivenWindow tmp : complexTriggerResult.resultWindows) {

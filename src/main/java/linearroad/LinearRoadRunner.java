@@ -24,6 +24,7 @@ import org.apache.flink.streaming.api.functions.AssignerWithPeriodicWatermarks;
 import org.apache.flink.streaming.api.functions.timestamps.AscendingTimestampExtractor;
 import org.apache.flink.streaming.api.functions.windowing.PassThroughWindowFunction;
 import org.apache.flink.streaming.api.watermark.Watermark;
+import org.apache.flink.util.OutputTag;
 import windowing.ExtendedKeyedStream;
 
 import java.io.Serializable;
@@ -67,6 +68,9 @@ public class LinearRoadRunner {
         env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
 
         String winParams = parameters.get("windowParams");
+
+        final OutputTag<String> latencySideStream = new OutputTag<String>("latency") {
+        };
 
         if (source.toLowerCase().equals("kafka")) {
             kafka = parameters.get("kafka");
@@ -144,6 +148,10 @@ public class LinearRoadRunner {
                 speedEventDataStreamSink = extendedKeyedStream.frameAggregate((BiFunction<Long, Long, Long> & Serializable) Long::sum, Long.parseLong(params[1]), Long.parseLong(params[2]), (ToLongFunction<SpeedEvent> & Serializable) value -> (long) value.getValue()).reduce((ReduceFunction<SpeedEvent>) (value1, value2) -> value1.getValue() > value2.getValue() ? value1 : value2, new PassThroughWindowFunction<>(), TypeInformation.of(SpeedEvent.class));
             } else throw new IllegalFormatFlagsException("No valid frame specified.");
 
+            DataStream<String> latencyStream = speedEventDataStreamSink.getSideOutput(latencySideStream);
+            latencyStream.writeAsText("./src/main/resources/output-" + bufferType + " " + windowType + "_alternative" + " parallelism " + env.getParallelism() + " - latency", FileSystem.WriteMode.OVERWRITE);
+
+
             speedEventDataStreamSink.writeAsText("./output-" + windowType + "params " + winParams + "parallelism " + env.getParallelism(), FileSystem.WriteMode.OVERWRITE);
             env.execute(windowType);
             //TODO time-based window
@@ -177,6 +185,8 @@ public class LinearRoadRunner {
                         TypeInformation.of(SpeedEvent.class));
             } else throw new IllegalFormatFlagsException("No valid frame specified.");
 
+            DataStream<String> latencyStream = speedEventDataStreamSink.getSideOutput(latencySideStream);
+            latencyStream.writeAsText("./src/main/resources/output-" + bufferType + " " + windowType + "_alternative" + " parallelism " + env.getParallelism() + " - latency", FileSystem.WriteMode.OVERWRITE);
 
             speedEventDataStreamSink.writeAsText("./output-" + winParams + "-" + bufferType + "-" + windowType + " parallelism_" + env.getParallelism(), FileSystem.WriteMode.OVERWRITE);
             env.execute(windowType);
