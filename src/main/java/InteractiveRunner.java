@@ -122,6 +122,9 @@ public class InteractiveRunner {
                         TypeInformation.of(SpeedEvent.class));
             else throw new IllegalFormatFlagsException("No valid frame specified.");
 
+            DataStream<String> latencyStream = speedEventDataStreamSink.getSideOutput(outputTag);
+            latencyStream.writeAsText("./src/main/resources/output-" + JOB_TYPE + "_alternative" + " parallelism " + streamExecutionEnvironment.getParallelism() + " - latency" , FileSystem.WriteMode.OVERWRITE);
+
             speedEventDataStreamSink.writeAsText("./src/main/resources/output-" + JOB_TYPE + " parallelism " + streamExecutionEnvironment.getParallelism(), FileSystem.WriteMode.OVERWRITE);
             streamExecutionEnvironment.execute(JOB_TYPE);
         }
