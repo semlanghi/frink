@@ -300,6 +300,10 @@ public class SplittingMergingWindowSet<W extends Window, P> {
         void merge(W mergeResult, Collection<W> mergedWindows, W stateWindowResult, Collection<W> mergedStateWindows) throws Exception;
     }
 
+    public Set<W> getKeys(){
+        return mapping.keySet();
+    }
+
     @Override
     public String toString() {
         return "MergingWindowSet{" +
