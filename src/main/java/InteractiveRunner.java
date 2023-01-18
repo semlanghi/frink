@@ -28,7 +28,7 @@ import java.util.function.ToLongFunction;
 
 public class InteractiveRunner {
 
-    private static final String JOB_TYPE = "frame_single_aggregate";
+    private static final String JOB_TYPE = "frame_multi_aggregate";
     private static final int ALLOWED_LATENESS = 5;
 
     public static void main(String[] args) throws Exception {
