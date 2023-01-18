@@ -36,7 +36,8 @@ import static org.apache.flink.streaming.connectors.kafka.FlinkKafkaConsumer09.K
 
 public class LinearRoadRunner {
 
-    static long windowLength=1L;
+    static long windowLength = 1L;
+
     public static void main(String[] args) throws Exception {
 
         ParameterTool parameters = ParameterTool.fromArgs(args);
@@ -46,55 +47,26 @@ public class LinearRoadRunner {
         String kafka;
         String fileName;
         String topic;
-        String jobType;
-        String numRecordsToEmit ;
+        String bufferType;
+        String windowType;
+        String numRecordsToEmit;
         StreamExecutionEnvironment env;
 
-        if(mode.equalsIgnoreCase("cluster"))
-             env = StreamExecutionEnvironment.getExecutionEnvironment();
+        if (mode.equalsIgnoreCase("cluster")) env = StreamExecutionEnvironment.getExecutionEnvironment();
         else {
             Configuration conf = new Configuration();
-            conf.setFloat( TaskManagerOptions.MANAGED_MEMORY_FRACTION, 0.5f);
-            env = StreamExecutionEnvironment.createLocalEnvironment(1,conf);
+            conf.setFloat(TaskManagerOptions.MANAGED_MEMORY_FRACTION, 0.5f);
+            env = StreamExecutionEnvironment.createLocalEnvironment(1, conf);
         }
 
-        int iNumRecordsToEmit=Integer.MAX_VALUE;
+        int iNumRecordsToEmit = Integer.MAX_VALUE;
 
-        jobType = parameters.getRequired("jobType");
+        bufferType = parameters.getRequired("bufferType");
+        windowType = parameters.getRequired("windowType");
 
-        String runAs;
-        runAs = parameters.get("runAs");
-        String generateOutput = parameters.get("generateOutput");
-        if (generateOutput == null)
-            generateOutput="No";
-        if (runAs == null)
-            runAs = "CEP";
+        env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
 
-        String timeMode = parameters.get("timeMode");
-        if (timeMode == null)
-            timeMode = "event";
-
-        if (timeMode.equalsIgnoreCase("event"))
-            env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
-        else
-            env.setStreamTimeCharacteristic(TimeCharacteristic.ProcessingTime);
-
-        String winLen = parameters.get("windowSize");
-
-        if (winLen != null) {
-            try {
-                windowLength = Long.parseLong(winLen);
-            }
-            catch(Exception e) {
-                e.printStackTrace();
-            }
-        }
-
-        numRecordsToEmit = parameters.get("numRecordsToEmit");
-
-        if (numRecordsToEmit != null)
-            iNumRecordsToEmit = Integer.parseInt(numRecordsToEmit);
-
+        String winParams = parameters.get("windowParams");
 
         if (source.toLowerCase().equals("kafka")) {
             kafka = parameters.get("kafka");
@@ -103,26 +75,31 @@ public class LinearRoadRunner {
             properties.setProperty("bootstrap.servers", kafka);
             properties.setProperty(KEY_POLL_TIMEOUT, "0");
 
-            FlinkKafkaCustomConsumer<String> consumer = new FlinkKafkaCustomConsumer<>(topic, new CustomStringSchema(new SimpleStringSchema(), parameters.getLong("maxMinutes", 0)), properties);
+            FlinkKafkaCustomConsumer<String> consumer =
+                    new FlinkKafkaCustomConsumer<>(
+                            topic,
+                            new CustomStringSchema(
+                                    new SimpleStringSchema(),
+                                    parameters.getLong("maxMinutes", 0)),
+                            properties);
             consumer.setStartFromEarliest();
 
-            if(parameters.get("rate")!=null){
+            if (parameters.get("rate") != null) {
                 FlinkConnectorRateLimiter rateLimiter = new GuavaFlinkConnectorRateLimiter();
                 rateLimiter.setRate(Long.parseLong(parameters.get("rate")));
                 consumer.setRateLimiter(rateLimiter);
             }
 
 
-
             consumer.assignTimestampsAndWatermarks(new AscendingTimestampExtractor<String>() {
                 @Override
                 public long extractAscendingTimestamp(String element) {
-                    String[] data = element.replace("[","").replace("]","").split(",");
+                    String[] data = element.replace("[", "").replace("]", "").split(",");
                     return Long.parseLong(data[8].trim());
                 }
             });
 
-            rawEventStream = env.addSource(consumer).map(new SpeedMapper(parameters.get("exp", "exp"), jobType,(runAs.equalsIgnoreCase("Window")) ? runAs+""+windowLength : runAs ,  env.getParallelism() ));
+            rawEventStream = env.addSource(consumer).map(new SpeedMapper(bufferType, windowType, winParams, env.getParallelism()));
 
 
         } else {
@@ -130,81 +107,95 @@ public class LinearRoadRunner {
             rawEventStream = env.addSource(new LinearRoadSource(fileName, iNumRecordsToEmit));
 
 
-        if (env.getStreamTimeCharacteristic() == TimeCharacteristic.EventTime) {
-            rawEventStream = rawEventStream.assignTimestampsAndWatermarks(new AssignerWithPeriodicWatermarks<SpeedEvent>() {
-                private long maxTimestampSeen = 0;
+            if (env.getStreamTimeCharacteristic() == TimeCharacteristic.EventTime) {
+                rawEventStream = rawEventStream.assignTimestampsAndWatermarks(new AssignerWithPeriodicWatermarks<SpeedEvent>() {
+                    private long maxTimestampSeen = 0;
 
-                @Override
-                public Watermark getCurrentWatermark() {
-                    return new Watermark(maxTimestampSeen);
-                }
+                    @Override
+                    public Watermark getCurrentWatermark() {
+                        return new Watermark(maxTimestampSeen);
+                    }
 
-                @Override
-                public long extractTimestamp(SpeedEvent temperatureEvent, long l) {
-                    long ts = temperatureEvent.getTimestamp();
-                    maxTimestampSeen = Long.max(maxTimestampSeen, l);
-                    return ts;
-                }
-            });
-        }}
+                    @Override
+                    public long extractTimestamp(SpeedEvent temperatureEvent, long l) {
+                        long ts = temperatureEvent.getTimestamp();
+                        maxTimestampSeen = Long.max(maxTimestampSeen, l);
+                        return ts;
+                    }
+                });
+            }
+        }
 
         env.setBufferTimeout(-1);
         env.getConfig().enableObjectReuse();
 
         long start = System.currentTimeMillis();
-        if (jobType.startsWith("frame_multi_")){
-            ExtendedKeyedStream<SpeedEvent,String> extendedKeyedStream = new ExtendedKeyedStream<>(rawEventStream, RawEvent::getKey);
+        if (bufferType.startsWith("multi_buffer")) {
+            ExtendedKeyedStream<SpeedEvent, String> extendedKeyedStream = new ExtendedKeyedStream<>(rawEventStream, RawEvent::getKey);
 
             SingleOutputStreamOperator<SpeedEvent> speedEventDataStreamSink;
 
-            if(jobType.endsWith("threshold"))
-                speedEventDataStreamSink = extendedKeyedStream.frameThreshold(50, (ToLongFunction<SpeedEvent> & Serializable) value -> (long) value.getValue()).reduce(
-                        (ReduceFunction<SpeedEvent>) (value1, value2) -> value1.getValue() > value2.getValue() ? value1 : value2,
-                        new PassThroughWindowFunction<>(),
-                        TypeInformation.of(SpeedEvent.class));
-            else if(jobType.endsWith("delta"))
-                speedEventDataStreamSink = extendedKeyedStream.frameDelta(50, (ToLongFunction<SpeedEvent> & Serializable) value -> (long) value.getValue()).reduce(
-                        (ReduceFunction<SpeedEvent>) (value1, value2) -> value1.getValue() > value2.getValue() ? value1 : value2,
-                        new PassThroughWindowFunction<>(),
-                        TypeInformation.of(SpeedEvent.class));
-            else if(jobType.endsWith("aggregate"))
-                speedEventDataStreamSink = extendedKeyedStream.frameAggregate((BiFunction<Long, Long, Long> & Serializable) Long::sum, 0L, 50, (ToLongFunction<SpeedEvent> & Serializable) value -> (long) value.getValue()).reduce(
-                        (ReduceFunction<SpeedEvent>) (value1, value2) -> value1.getValue() > value2.getValue() ? value1 : value2,
-                        new PassThroughWindowFunction<>(),
-                        TypeInformation.of(SpeedEvent.class));
-            else throw new IllegalFormatFlagsException("No valid frame specified.");
+            if (windowType.endsWith("threshold"))
+                speedEventDataStreamSink = extendedKeyedStream.frameThreshold(50, (ToLongFunction<SpeedEvent> & Serializable) value -> (long) value.getValue()).reduce((ReduceFunction<SpeedEvent>) (value1, value2) -> value1.getValue() > value2.getValue() ? value1 : value2, new PassThroughWindowFunction<>(), TypeInformation.of(SpeedEvent.class));
+            else if (windowType.endsWith("delta"))
+                speedEventDataStreamSink = extendedKeyedStream.frameDelta(50, (ToLongFunction<SpeedEvent> & Serializable) value -> (long) value.getValue()).reduce((ReduceFunction<SpeedEvent>) (value1, value2) -> value1.getValue() > value2.getValue() ? value1 : value2, new PassThroughWindowFunction<>(), TypeInformation.of(SpeedEvent.class));
+            else if (windowType.endsWith("aggregate")) {
+                String[] params = winParams.split(";");
+                speedEventDataStreamSink = extendedKeyedStream.frameAggregate((BiFunction<Long, Long, Long> & Serializable) Long::sum, Long.parseLong(params[1]), Long.parseLong(params[2]), (ToLongFunction<SpeedEvent> & Serializable) value -> (long) value.getValue()).reduce((ReduceFunction<SpeedEvent>) (value1, value2) -> value1.getValue() > value2.getValue() ? value1 : value2, new PassThroughWindowFunction<>(), TypeInformation.of(SpeedEvent.class));
+            } else throw new IllegalFormatFlagsException("No valid frame specified.");
 
-            speedEventDataStreamSink.writeAsText("./output-" + jobType + " parallelism " + env.getParallelism(), FileSystem.WriteMode.OVERWRITE);
-            env.execute(jobType);
-        }else if(jobType.startsWith("frame_single_")){
-            ExtendedKeyedStream<SpeedEvent,String> extendedKeyedStream = new ExtendedKeyedStream<>(rawEventStream, RawEvent::getKey);
+            speedEventDataStreamSink.writeAsText("./output-" + windowType + "params " + winParams + "parallelism " + env.getParallelism(), FileSystem.WriteMode.OVERWRITE);
+            env.execute(windowType);
+            //TODO time-based window
+//            String winLen = parameters.get("windowSize");
+//
+//            if (winLen != null) {
+//                try {
+//                    windowLength = Long.parseLong(winLen);
+//                } catch (Exception e) {
+//                    e.printStackTrace();
+//                }
+//            }
+        } else if (bufferType.startsWith("single_buffer")) {
+            ExtendedKeyedStream<SpeedEvent, String> extendedKeyedStream = new ExtendedKeyedStream<>(rawEventStream, RawEvent::getKey);
 
             SingleOutputStreamOperator<SpeedEvent> speedEventDataStreamSink;
 
-            if(jobType.endsWith("threshold"))
-                speedEventDataStreamSink = extendedKeyedStream.frameThresholdSingle(50, (ToLongFunction<SpeedEvent> & Serializable) value -> (long) value.getValue()).reduce(
-                        (ReduceFunction<SpeedEvent>) (value1, value2) -> value1.getValue() > value2.getValue() ? value1 : value2,
-                        new PassThroughWindowFunction<>(),
+            if (windowType.endsWith("threshold")) {
+                speedEventDataStreamSink = extendedKeyedStream.frameThresholdSingle(50, (ToLongFunction<SpeedEvent> & Serializable) value -> (long) value.getValue()).reduce((ReduceFunction<SpeedEvent>) (value1, value2) -> value1.getValue() > value2.getValue() ? value1 : value2, new PassThroughWindowFunction<>(), TypeInformation.of(SpeedEvent.class));
+            } else if (windowType.endsWith("delta")) {
+                speedEventDataStreamSink = extendedKeyedStream.frameDeltaSingle(50, (ToLongFunction<SpeedEvent> & Serializable) value -> (long) value.getValue()).reduce((ReduceFunction<SpeedEvent>) (value1, value2) -> value1.getValue() > value2.getValue() ? value1 : value2, new PassThroughWindowFunction<>(), TypeInformation.of(SpeedEvent.class));
+
+            } else if (windowType.endsWith("aggregate")) {
+                String[] params = winParams.split(";");
+                speedEventDataStreamSink = extendedKeyedStream.frameAggregateSingle(
+                        (BiFunction<Long, Long, Long> & Serializable) Long::sum,
+                        Long.parseLong(params[1]), Long.parseLong(params[2]),
+                        (ToLongFunction<SpeedEvent> & Serializable) value ->
+                                (long) value.getValue()).reduce((ReduceFunction<SpeedEvent>) (value1, value2)
+                                -> value1.getValue() > value2.getValue() ? value1 : value2, new PassThroughWindowFunction<>(),
                         TypeInformation.of(SpeedEvent.class));
-            else if(jobType.endsWith("delta"))
-                speedEventDataStreamSink = extendedKeyedStream.frameDeltaSingle(50, (ToLongFunction<SpeedEvent> & Serializable) value -> (long) value.getValue()).reduce(
-                        (ReduceFunction<SpeedEvent>) (value1, value2) -> value1.getValue() > value2.getValue() ? value1 : value2,
-                        new PassThroughWindowFunction<>(),
-                        TypeInformation.of(SpeedEvent.class));
-            else if(jobType.endsWith("aggregate"))
-                speedEventDataStreamSink = extendedKeyedStream.frameAggregateSingle((BiFunction<Long, Long, Long> & Serializable) Long::sum, 0L, 50, (ToLongFunction<SpeedEvent> & Serializable) value -> (long) value.getValue()).reduce(
-                        (ReduceFunction<SpeedEvent>) (value1, value2) -> value1.getValue() > value2.getValue() ? value1 : value2,
-                        new PassThroughWindowFunction<>(),
-                        TypeInformation.of(SpeedEvent.class));
-            else throw new IllegalFormatFlagsException("No valid frame specified.");
+            } else throw new IllegalFormatFlagsException("No valid frame specified.");
 
 
-            speedEventDataStreamSink.writeAsText("./output-"+jobType+" parallelism "+env.getParallelism(), FileSystem.WriteMode.OVERWRITE);
-            env.execute(jobType);
+            speedEventDataStreamSink.writeAsText("./output-" + winParams + "-" + bufferType + "-" + windowType + " parallelism_" + env.getParallelism(), FileSystem.WriteMode.OVERWRITE);
+            env.execute(windowType);
         }
 
-        System.out.println("Time taken: "+(System.currentTimeMillis() - start) +" ms");
+        System.out.println("Time taken: " + (System.currentTimeMillis() - start) + " ms");
     }
+
+//    private static BiFunction<Long, Long, Long> getFunction(String param) {
+//        switch (param) {
+//            case "max":
+//                return (Serializable) Long::max;
+//            case "min":
+//                return Long::min;
+//            case "sum":
+//            default:
+//                return Long::sum;
+//        }
+//    }
 
 }
 

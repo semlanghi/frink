@@ -13,8 +13,8 @@ public class SpeedMapper extends RichMapFunction<String, SpeedEvent> {
     private String query;
     private long startTime;
     private final String experimentId;
-    private long eventsCounter=0;
-    private long registerCounter=0;
+    private long eventsCounter = 0;
+    private long registerCounter = 0;
     private long actualCounterRegistrationRate;
     private PerformanceFileBuilder performanceFileBuilder;
 
@@ -23,42 +23,42 @@ public class SpeedMapper extends RichMapFunction<String, SpeedEvent> {
         this.startTime = System.currentTimeMillis();
         super.open(parameters);
         this.performanceFileBuilder = new PerformanceFileBuilder(
-                "performance-results-"+implementation+"-"+experimentId+"-"+query+"-parallelism_"+parallelism, "Flink");
+                "performance-" + implementation + "-" + experimentId + "-" + query + "-parallelism_" + parallelism, "Flink");
     }
 
-    private void registerThroughput(){
+    private void registerThroughput() {
         long endTime = System.currentTimeMillis();
         long diff = endTime - startTime;
-        double throughput = (double)eventsCounter;
+        double throughput = (double) eventsCounter;
         double ddiff = (double) diff;
-        throughput = throughput/diff;
-        throughput = throughput *1000;
-        performanceFileBuilder.register(query, throughput, experimentId, true, eventsCounter, diff, startTime, endTime);
+        throughput = throughput / diff;
+        throughput = throughput * 1000;
+        performanceFileBuilder.register(query, throughput, experimentId, false, eventsCounter, diff, startTime, endTime);
     }
 
     public SpeedMapper(String query, String expId) {
         this.query = query;
-        this.experimentId =expId;
+        this.experimentId = expId;
     }
 
     public SpeedMapper(String expId, String query, String implementation, int parallelism) {
-        this.experimentId =expId;
+        this.experimentId = expId;
         this.query = query;
         this.implementation = implementation;
         this.parallelism = parallelism;
-        actualCounterRegistrationRate = ExperimentConfiguration.COUNTER_REGISTRATION_RATE_MINUTES*60*1000;
+        actualCounterRegistrationRate = ExperimentConfiguration.COUNTER_REGISTRATION_RATE_MINUTES * 60 * 1000;
     }
 
     @Override
     public SpeedEvent map(String s) throws Exception {
-        String[] data = s.replace("[","").replace("]","").split(", ");
+        String[] data = s.replace("[", "").replace("]", "").split(", ");
         eventsCounter++;
         long currentTime = System.currentTimeMillis();
-        if(registerCounter<(currentTime -this.startTime)/actualCounterRegistrationRate){
+        if (registerCounter < (currentTime - this.startTime) / actualCounterRegistrationRate) {
             registerCounter++;
             performanceFileBuilder.register(query, experimentId, startTime, currentTime, eventsCounter, implementation, parallelism);
         }
-        return new SpeedEvent(data[0].trim(),Long.parseLong(data[8].trim()),Double.parseDouble(data[1].trim()));
+        return new SpeedEvent(data[0].trim(), Long.parseLong(data[8].trim()), Double.parseDouble(data[1].trim()));
 
     }
 
