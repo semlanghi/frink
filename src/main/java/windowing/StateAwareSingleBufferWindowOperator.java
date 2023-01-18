@@ -22,16 +22,12 @@ import org.apache.flink.annotation.Internal;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.state.*;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
-import org.apache.flink.api.common.typeutils.base.LongSerializer;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.metrics.MetricGroup;
 import org.apache.flink.runtime.state.internal.InternalListState;
 import org.apache.flink.shaded.guava18.com.google.common.base.Function;
-import org.apache.flink.shaded.guava18.com.google.common.base.Predicate;
 import org.apache.flink.shaded.guava18.com.google.common.collect.FluentIterable;
-import org.apache.flink.shaded.guava18.com.google.common.collect.Iterables;
 import org.apache.flink.streaming.api.operators.InternalTimer;
-import org.apache.flink.streaming.api.watermark.Watermark;
 import org.apache.flink.streaming.api.windowing.assigners.MergingWindowAssigner;
 import org.apache.flink.streaming.api.windowing.assigners.WindowAssigner;
 import org.apache.flink.streaming.api.windowing.evictors.Evictor;
@@ -45,12 +41,9 @@ import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.util.OutputTag;
 import windowing.frames.FrameState;
 import windowing.frames.FrameWindowing;
-import windowing.windows.CandidateTimeWindow;
 import windowing.windows.DataDrivenWindow;
 
-import javax.annotation.Nullable;
 import java.util.*;
-import java.util.function.Consumer;
 
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
@@ -91,7 +84,8 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
     // ------------------------------------------------------------------------
 
     // A stream to report timestamps of processing elements
-    final OutputTag<String> outputTag = new OutputTag<String>("latency"){};
+    final OutputTag<String> latencyStream = new OutputTag<String>("latency"){};
+    final OutputTag<String> stateSizeStream = new OutputTag<String>("stateSize"){};
 
     public StateAwareSingleBufferWindowOperator(WindowAssigner<? super IN, W> windowAssigner,
                                                 TypeSerializer<W> windowSerializer,
@@ -128,6 +122,7 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
         // N.B.: Always one window, i.e., the Global Window
         W window = elementWindows.iterator().next();
         StringBuilder latency = new StringBuilder();
+        StringBuilder stateSize = new StringBuilder();
         //TODO: SB ADD Start
         latency.append("SB_ADD_Start="+System.nanoTime()+",");
         evictingWindowState.setCurrentNamespace(window);
@@ -165,6 +160,13 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
                 extractData(recordsWithTimestamp, complexTriggerResult.resultWindows);
         //TODO: SB Content End
         latency.append("SB_Content_End="+System.nanoTime()+",");
+        //Ahmed: Will do the iteration to compute the state here to avoid affecting the latency of content delivery
+        long count =0;
+        for (Object obj : contents)
+        {
+            count++;
+        }
+        stateSize.append("stateSize="+count+",");
         // The eviction before the emission of the output is not necessary
 
         for (DataDrivenWindow tmp : complexTriggerResult.resultWindows) {
@@ -183,7 +185,8 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
         //TODO: SB Evict End
         latency.append("SB_Evict_End="+System.nanoTime());
         //Emit to the side output stream
-        this.output.collect(outputTag,new StreamRecord<String>(latency.toString()));
+        this.output.collect(latencyStream,new StreamRecord<String>(latency.toString()));
+        this.output.collect(stateSizeStream,new StreamRecord<String>(stateSize.toString()));
     }
 
     /**

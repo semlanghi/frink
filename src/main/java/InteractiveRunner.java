@@ -28,12 +28,13 @@ import java.util.function.ToLongFunction;
 
 public class InteractiveRunner {
 
-    private static final String JOB_TYPE = "frame_multi_aggregate";
+    private static final String JOB_TYPE = "frame_single_aggregate";
     private static final int ALLOWED_LATENESS = 5;
 
     public static void main(String[] args) throws Exception {
 
-        final OutputTag<String> outputTag = new OutputTag<String>("latency"){};
+        final OutputTag<String> latencySideStream = new OutputTag<String>("latency"){};
+        final OutputTag<String> stateSizeSideStream = new OutputTag<String>("stateSize"){};
 
         // Configuration Creation
         Configuration conf = new Configuration();
@@ -94,7 +95,7 @@ public class InteractiveRunner {
                         TypeInformation.of(SpeedEvent.class));
             else throw new IllegalFormatFlagsException("No valid frame specified.");
 
-            DataStream<String> latencyStream = speedEventDataStreamSink.getSideOutput(outputTag);
+            DataStream<String> latencyStream = speedEventDataStreamSink.getSideOutput(latencySideStream);
             latencyStream.writeAsText("./src/main/resources/output-" + JOB_TYPE + "_alternative" + " parallelism " + streamExecutionEnvironment.getParallelism() + " - latency" , FileSystem.WriteMode.OVERWRITE);
             speedEventDataStreamSink.writeAsText("./src/main/resources/output-" + JOB_TYPE + "_alternative" + " parallelism " + streamExecutionEnvironment.getParallelism() , FileSystem.WriteMode.OVERWRITE);
             streamExecutionEnvironment.execute(JOB_TYPE);
@@ -122,8 +123,10 @@ public class InteractiveRunner {
                         TypeInformation.of(SpeedEvent.class));
             else throw new IllegalFormatFlagsException("No valid frame specified.");
 
-            DataStream<String> latencyStream = speedEventDataStreamSink.getSideOutput(outputTag);
+            DataStream<String> latencyStream = speedEventDataStreamSink.getSideOutput(latencySideStream);
+            DataStream<String> stateSizeStream = speedEventDataStreamSink.getSideOutput(stateSizeSideStream);
             latencyStream.writeAsText("./src/main/resources/output-" + JOB_TYPE + "_alternative" + " parallelism " + streamExecutionEnvironment.getParallelism() + " - latency" , FileSystem.WriteMode.OVERWRITE);
+            stateSizeStream.writeAsText("./src/main/resources/output-" + JOB_TYPE + "_alternative" + " parallelism " + streamExecutionEnvironment.getParallelism() + " - state size" , FileSystem.WriteMode.OVERWRITE);
 
             speedEventDataStreamSink.writeAsText("./src/main/resources/output-" + JOB_TYPE + " parallelism " + streamExecutionEnvironment.getParallelism(), FileSystem.WriteMode.OVERWRITE);
             streamExecutionEnvironment.execute(JOB_TYPE);
