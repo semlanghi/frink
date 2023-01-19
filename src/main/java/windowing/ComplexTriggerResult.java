@@ -10,9 +10,11 @@ public class ComplexTriggerResult {
 
     public TriggerResult internalResult;
     public Collection<DataDrivenWindow> resultWindows;
+    public String latencyInfo;
 
-    public ComplexTriggerResult(TriggerResult internalResult, Collection<DataDrivenWindow> resultWindows) {
+    public ComplexTriggerResult(TriggerResult internalResult, Collection<DataDrivenWindow> resultWindows, String latencyInfo) {
         this.internalResult = internalResult;
         this.resultWindows = resultWindows;
+        this.latencyInfo = latencyInfo;
     }
 }

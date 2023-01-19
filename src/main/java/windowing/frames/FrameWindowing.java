@@ -597,7 +597,9 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
                                       long timestamp,
                                       TriggerContext ctx){
 
+            StringBuilder sb = new StringBuilder();
             //TODO: SB Scope Start
+            sb.append("SB_Scope_Start=").append(System.nanoTime()).append(",");
             long elementLong = toLongFunctionValue.applyAsLong(element);
 
             StateAwareContextWrapper<I,DataDrivenWindow> stateAwareContextWrapper = new StateAwareTriggerContextWrapper<>(ctx);
@@ -617,13 +619,17 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
                 definitiveElementWindows.addAll(finalWindows);
             }
             //TODO: SB Scope End
-
+            sb.append("SB_Scope_End=").append(System.nanoTime()).append(",");
             //TODO: SB Report Start
             //Pre-filter: in case no windows is available, optimization, without going to the singleBufferEvictor
+            sb.append("SB_Report_Start=").append(System.nanoTime()).append(",");
             if(!definitiveElementWindows.isEmpty()){
-                return new ComplexTriggerResult(TriggerResult.FIRE, definitiveElementWindows);
-            } return new ComplexTriggerResult(TriggerResult.CONTINUE, Collections.emptyList());
+
+                return new ComplexTriggerResult(TriggerResult.FIRE, definitiveElementWindows, sb.toString());
+            }
+            return new ComplexTriggerResult(TriggerResult.CONTINUE, Collections.emptyList(), sb.toString());
             //TODO: SB Report End
+            //Ahmed Awad: I will handle that in the method that calls the onWindow method.
         }
 
         @Override

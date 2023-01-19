@@ -136,6 +136,7 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
         evictorContext.window = window;
 
         ComplexTriggerResult complexTriggerResult = this.frameTrigger.onWindow(element.getValue(), element.getTimestamp(), triggerContext);
+        latency.append(complexTriggerResult.latencyInfo).append("SB_Report_End=").append(System.nanoTime()).append(",");
 
         //TODO: SB Content Start
         latency.append("SB_Content_Start="+System.nanoTime()+",");
