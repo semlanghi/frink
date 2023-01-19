@@ -135,7 +135,6 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
         evictorContext.key = key;
         evictorContext.window = window;
 
-
         ComplexTriggerResult complexTriggerResult = this.frameTrigger.onWindow(element.getValue(), element.getTimestamp(), triggerContext);
 
         //TODO: SB Content Start

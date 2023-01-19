@@ -69,7 +69,7 @@ public class LinearRoadRunner {
 
         String winParams = parameters.get("windowParams");
 
-        final OutputTag<String> latencySideStream = new OutputTag<String>("latency") {
+        final OutputTag<String> metricsSideStream = new OutputTag<String>("latency") {
         };
 
         if (source.toLowerCase().equals("kafka")) {
@@ -148,9 +148,8 @@ public class LinearRoadRunner {
                 speedEventDataStreamSink = extendedKeyedStream.frameAggregate((BiFunction<Long, Long, Long> & Serializable) Long::sum, Long.parseLong(params[1]), Long.parseLong(params[2]), (ToLongFunction<SpeedEvent> & Serializable) value -> (long) value.getValue()).reduce((ReduceFunction<SpeedEvent>) (value1, value2) -> value1.getValue() > value2.getValue() ? value1 : value2, new PassThroughWindowFunction<>(), TypeInformation.of(SpeedEvent.class));
             } else throw new IllegalFormatFlagsException("No valid frame specified.");
 
-            DataStream<String> latencyStream = speedEventDataStreamSink.getSideOutput(latencySideStream);
-            latencyStream.writeAsText("./src/main/resources/output-" + bufferType + " " + windowType + "_alternative" + " parallelism " + env.getParallelism() + " - latency", FileSystem.WriteMode.OVERWRITE);
-
+            DataStream<String> metricsStream = speedEventDataStreamSink.getSideOutput(metricsSideStream);
+            metricsStream.writeAsText("./metrics-" + winParams + "-" + bufferType + "-" + windowType + " parallelism_" + env.getParallelism() + " - latency", FileSystem.WriteMode.OVERWRITE);
 
             speedEventDataStreamSink.writeAsText("./output-" + windowType + "params " + winParams + "parallelism " + env.getParallelism(), FileSystem.WriteMode.OVERWRITE);
             env.execute(windowType);
@@ -185,8 +184,8 @@ public class LinearRoadRunner {
                         TypeInformation.of(SpeedEvent.class));
             } else throw new IllegalFormatFlagsException("No valid frame specified.");
 
-            DataStream<String> latencyStream = speedEventDataStreamSink.getSideOutput(latencySideStream);
-            latencyStream.writeAsText("./src/main/resources/output-" + bufferType + " " + windowType + "_alternative" + " parallelism " + env.getParallelism() + " - latency", FileSystem.WriteMode.OVERWRITE);
+            DataStream<String> latencyStream = speedEventDataStreamSink.getSideOutput(metricsSideStream);
+            latencyStream.writeAsText("./metrics-" + winParams + "-" + bufferType + "-" + windowType + " parallelism_" + env.getParallelism() + " - latency", FileSystem.WriteMode.OVERWRITE);
 
             speedEventDataStreamSink.writeAsText("./output-" + winParams + "-" + bufferType + "-" + windowType + " parallelism_" + env.getParallelism(), FileSystem.WriteMode.OVERWRITE);
             env.execute(windowType);
