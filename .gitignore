@@ -1,6 +1,7 @@
 # Compiled class file
 *.class
 
+
 .DS_Store
 
 # Log file
@@ -29,3 +30,7 @@ hs_err_pid*
 .idea/
 
 data/
+target/
+kafka/
+
+
