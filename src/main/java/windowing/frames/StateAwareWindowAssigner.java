@@ -1,4 +1,4 @@
-package windowing;
+package windowing.frames;
 
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.state.MapStateDescriptor;
@@ -8,6 +8,7 @@ import org.apache.flink.streaming.api.windowing.assigners.MergingWindowAssigner;
 import org.apache.flink.streaming.api.windowing.windows.Window;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import windowing.frames.FrameState;
+import windowing.frames.StateAwareMultiBufferWindowOperator;
 
 import java.io.Serializable;
 import java.util.function.BiFunction;

@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-package windowing;
+package windowing.frames;
 
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.flink.api.common.state.ListState;

@@ -6,13 +6,13 @@ import windowing.windows.DataDrivenWindow;
 
 import java.util.Collection;
 
-public class ComplexTriggerResult {
+public class ComplexTriggerResult<W> {
 
     public TriggerResult internalResult;
-    public Collection<DataDrivenWindow> resultWindows;
+    public Collection<W> resultWindows;
     public String latencyInfo;
 
-    public ComplexTriggerResult(TriggerResult internalResult, Collection<DataDrivenWindow> resultWindows, String latencyInfo) {
+    public ComplexTriggerResult(TriggerResult internalResult, Collection<W> resultWindows, String latencyInfo) {
         this.internalResult = internalResult;
         this.resultWindows = resultWindows;
         this.latencyInfo = latencyInfo;

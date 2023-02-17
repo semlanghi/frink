@@ -46,7 +46,6 @@ import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.util.OutputTag;
 import windowing.ComplexTriggerResult;
 
-import java.sql.Time;
 import java.util.*;
 
 import static org.apache.flink.util.Preconditions.checkNotNull;
@@ -64,7 +63,7 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  * @param <W>   The type of {@code Window} that the {@code WindowAssigner} assigns.
  */
 @Internal
-public class FrinkTimeBasedEvictingWindowOperator<K, IN, OUT, W extends Window>
+public class FrinkTimeBasedSingleBufferWindowOperator<K, IN, OUT, W extends Window>
         extends FrinkTimeBasedMultiBufferWindowOperator<K, IN, Iterable<IN>, OUT, W> {
 
     private static final long serialVersionUID = 1L;
@@ -87,16 +86,16 @@ public class FrinkTimeBasedEvictingWindowOperator<K, IN, OUT, W extends Window>
 
     // ------------------------------------------------------------------------
 
-    public FrinkTimeBasedEvictingWindowOperator(WindowAssigner<? super IN, W> windowAssigner,
-                                                TypeSerializer<W> windowSerializer,
-                                                KeySelector<IN, K> keySelector,
-                                                TypeSerializer<K> keySerializer,
-                                                StateDescriptor<? extends ListState<StreamRecord<IN>>, ?> windowStateDescriptor,
-                                                InternalWindowFunction<Iterable<IN>, OUT, K, W> windowFunction,
-                                                Trigger<? super IN, ? super W> trigger,
-                                                Evictor<? super IN, ? super W> evictor,
-                                                long allowedLateness,
-                                                OutputTag<IN> lateDataOutputTag) {
+    public FrinkTimeBasedSingleBufferWindowOperator(WindowAssigner<? super IN, W> windowAssigner,
+                                                    TypeSerializer<W> windowSerializer,
+                                                    KeySelector<IN, K> keySelector,
+                                                    TypeSerializer<K> keySerializer,
+                                                    StateDescriptor<? extends ListState<StreamRecord<IN>>, ?> windowStateDescriptor,
+                                                    InternalWindowFunction<Iterable<IN>, OUT, K, W> windowFunction,
+                                                    Trigger<? super IN, ? super W> trigger,
+                                                    Evictor<? super IN, ? super W> evictor,
+                                                    long allowedLateness,
+                                                    OutputTag<IN> lateDataOutputTag) {
 
         super(windowAssigner, windowSerializer, keySelector,
                 keySerializer, null, windowFunction, trigger, allowedLateness, lateDataOutputTag);
@@ -107,6 +106,7 @@ public class FrinkTimeBasedEvictingWindowOperator<K, IN, OUT, W extends Window>
         this.evictingWindowStateDescriptor = checkNotNull(windowStateDescriptor);
     }
 
+
     @Override
     public void processElement(StreamRecord<IN> element) throws Exception {
         final Collection<W> elementWindows = windowAssigner.assignWindows(
@@ -116,6 +116,11 @@ public class FrinkTimeBasedEvictingWindowOperator<K, IN, OUT, W extends Window>
         boolean isSkippedElement = true;
 
         final K key = this.<K>getKeyedStateBackend().getCurrentKey();
+
+        if (element.getTimestamp() + allowedLateness <= internalTimerService.currentWatermark()) {
+            System.out.println(element);
+            return;
+        }
 
         for (W window : elementWindows) {
 
@@ -149,17 +154,28 @@ public class FrinkTimeBasedEvictingWindowOperator<K, IN, OUT, W extends Window>
             SortedMap<TimeWindow, ? extends Iterable<StreamRecord<IN>>> win2Fire = extractData(contents, complexTriggerResult.resultWindows);
 
 
-            for (TimeWindow w : complexTriggerResult.resultWindows) {
-                //actually a single window
-                if (complexTriggerResult.internalResult.isFire()) {
-
+            if (complexTriggerResult.internalResult.isFire()) {
+                for (TimeWindow w : complexTriggerResult.resultWindows) {
                     if (win2Fire.containsKey(w))
                         emitWindowContents(window, win2Fire.get(w), evictingWindowState);
                 }
-                if (complexTriggerResult.internalResult.isPurge()) {
-                    evictingWindowState.clear();
-                }
+                //actually a single window
             }
+
+            if (complexTriggerResult.internalResult.isPurge()) {
+                evictingWindowState.clear();
+            }
+
+            FluentIterable<TimestampedValue<IN>> recordsWithTimestamp = FluentIterable
+                    .from(contents)
+                    .transform(new Function<StreamRecord<IN>, TimestampedValue<IN>>() {
+                        @Override
+                        public TimestampedValue<IN> apply(StreamRecord<IN> input) {
+                            return TimestampedValue.from(input);
+                        }
+                    });
+
+            evictorContext.evictAfter(recordsWithTimestamp, (int) (this.allowedLateness / 1000));
 
             registerCleanupTimer(window);
         }
@@ -176,17 +192,17 @@ public class FrinkTimeBasedEvictingWindowOperator<K, IN, OUT, W extends Window>
                 this.numLateRecordsDropped.inc();
             }
         }
+
     }
 
     private SortedMap<TimeWindow, ? extends Iterable<StreamRecord<IN>>> extractData(Iterable<StreamRecord<IN>> resultCollection, Collection<TimeWindow> resultWindows) {
 
         SortedMap<TimeWindow, List<StreamRecord<IN>>> internalWindows = new TreeMap<>(Comparator.comparingLong(TimeWindow::getEnd));
-        resultCollection.forEach(inTimestampedValue -> resultWindows.stream()
-                .filter(window -> window.getStart() <= inTimestampedValue.getTimestamp() && window.maxTimestamp() + 1 > inTimestampedValue.getTimestamp())
-                .findFirst()
-                .ifPresent(window -> {
+        resultCollection.forEach(item -> resultWindows.stream()
+                .filter(window -> window.getStart() <= item.getTimestamp() && item.getTimestamp() < window.getEnd())
+                .forEach(window -> {
                     internalWindows.putIfAbsent(window, new ArrayList<>());
-                    internalWindows.get(window).add(inTimestampedValue);
+                    internalWindows.get(window).add(item);
                 }));
 
         return internalWindows;
@@ -217,16 +233,29 @@ public class FrinkTimeBasedEvictingWindowOperator<K, IN, OUT, W extends Window>
             evictingWindowState.setCurrentNamespace(triggerContext.window);
         }
 
-        TriggerResult triggerResult = triggerContext.onEventTime(timer.getTimestamp());
 
-        if (triggerResult.isFire()) {
-            Iterable<StreamRecord<IN>> contents = evictingWindowState.get();
-            if (contents != null) {
-                emitWindowContents(triggerContext.window, contents, evictingWindowState);
+        ComplexTriggerResult<TimeWindow> complexTriggerResult = singleBufferTrigger.onEventTime(timer.getTimestamp());
+//        this.singleBufferTrigger.onWindow(null, timer.getTimestamp(), triggerContext, windowAssignerContext);
+
+        Iterable<StreamRecord<IN>> contents = evictingWindowState.get();
+
+        if (contents == null)
+            return;
+
+        SortedMap<TimeWindow, ? extends Iterable<StreamRecord<IN>>> win2Fire = extractData(contents, complexTriggerResult.resultWindows);
+
+        if (complexTriggerResult.internalResult.isFire()) {
+            for (TimeWindow w : complexTriggerResult.resultWindows) {
+                //actually a single window
+
+                if (win2Fire.containsKey(w))
+                    emitWindowContents(triggerContext.window, win2Fire.get(w), evictingWindowState);
             }
+
+
         }
 
-        if (triggerResult.isPurge()) {
+        if (complexTriggerResult.internalResult.isPurge()) {
             evictingWindowState.clear();
         }
 
@@ -238,6 +267,8 @@ public class FrinkTimeBasedEvictingWindowOperator<K, IN, OUT, W extends Window>
             // need to make sure to update the merging state in state
             mergingWindows.persist();
         }
+
+
     }
 
     @Override
@@ -315,10 +346,10 @@ public class FrinkTimeBasedEvictingWindowOperator<K, IN, OUT, W extends Window>
 
         //work around to fix FLINK-4369, remove the evicted elements from the windowState.
         //this is inefficient, but there is no other way to remove elements from ListState, which is an AppendingState.
-        windowState.clear();
-        for (TimestampedValue<IN> record : recordsWithTimestamp) {
-            windowState.add(record.getStreamRecord());
-        }
+//        windowState.clear();
+//        for (TimestampedValue<IN> record : recordsWithTimestamp) {
+//            windowState.add(record.getStreamRecord());
+//        }
     }
 
     private void clearAllState(
@@ -363,7 +394,7 @@ public class FrinkTimeBasedEvictingWindowOperator<K, IN, OUT, W extends Window>
 
         @Override
         public MetricGroup getMetricGroup() {
-            return FrinkTimeBasedEvictingWindowOperator.this.getMetricGroup();
+            return FrinkTimeBasedSingleBufferWindowOperator.this.getMetricGroup();
         }
 
         public K getKey() {
@@ -371,11 +402,11 @@ public class FrinkTimeBasedEvictingWindowOperator<K, IN, OUT, W extends Window>
         }
 
         void evictBefore(Iterable<TimestampedValue<IN>> elements, int size) {
-            evictor.evictBefore((Iterable) elements, size, window, this);
+            getEvictor().evictBefore((Iterable) elements, size, window, this);
         }
 
         void evictAfter(Iterable<TimestampedValue<IN>> elements, int size) {
-            evictor.evictAfter((Iterable) elements, size, window, this);
+            getEvictor().evictAfter((Iterable) elements, size, window, this);
         }
     }
 
@@ -407,6 +438,11 @@ public class FrinkTimeBasedEvictingWindowOperator<K, IN, OUT, W extends Window>
     @VisibleForTesting
     public Evictor<? super IN, ? super W> getEvictor() {
         return evictor;
+    }
+
+    @Override
+    public Trigger<? super IN, ? super W> getTrigger() {
+        return (Trigger<? super IN, ? super W>) singleBufferTrigger;
     }
 
     @Override

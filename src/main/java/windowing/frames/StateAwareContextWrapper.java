@@ -1,4 +1,4 @@
-package windowing;
+package windowing.frames;
 
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.state.MapStateDescriptor;

@@ -1,4 +1,4 @@
-package windowing;
+package windowing.frames;
 
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;

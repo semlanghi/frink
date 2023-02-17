@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-package windowing;
+package windowing.frames;
 
 import org.apache.flink.streaming.api.windowing.evictors.Evictor;
 import org.apache.flink.streaming.api.windowing.triggers.Trigger;

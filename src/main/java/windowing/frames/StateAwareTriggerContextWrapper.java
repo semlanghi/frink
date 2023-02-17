@@ -1,4 +1,4 @@
-package windowing;
+package windowing.frames;
 
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.state.MapStateDescriptor;
@@ -7,7 +7,6 @@ import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.streaming.api.windowing.triggers.Trigger;
 import org.apache.flink.streaming.api.windowing.windows.Window;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
-import windowing.frames.FrameState;
 
 public class StateAwareTriggerContextWrapper<T, W extends Window> implements StateAwareContextWrapper<T, W> {
 

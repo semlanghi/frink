@@ -26,19 +26,21 @@ import org.apache.flink.streaming.runtime.streamrecord.StreamElementSerializer;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.util.OutputTag;
 import org.apache.flink.util.Preconditions;
+import windowing.frames.FrameWindowing;
+import windowing.frames.StateAwareMultiBufferWindowOperator;
+import windowing.frames.StateAwareSingleBufferWindowOperator;
+import windowing.time.FrinkTimeBasedMultiBufferWindowOperator;
+import windowing.time.FrinkTimeBasedSingleBufferWindowOperator;
 
 import javax.annotation.Nullable;
 import java.lang.reflect.Type;
-import java.sql.Statement;
-
-import static org.apache.flink.util.Preconditions.checkNotNull;
 
 public class StateAwareWindowedStream<T, K, W extends Window> extends WindowedStream<T, K, W> {
 
-    private KeyedStream<T,K> visibleInput;
-    private WindowAssigner<T,W> visibleWindowAssigner;
-    private Trigger<T,W> visibleTrigger;
-    private Evictor<T,W> visibleEvictor;
+    private KeyedStream<T, K> visibleInput;
+    private WindowAssigner<T, W> visibleWindowAssigner;
+    private Trigger<T, W> visibleTrigger;
+    private Evictor<T, W> visibleEvictor;
     private long visibleAllowedLateness;
     private OutputTag<T> visibleLateDataOutputTag;
 
@@ -70,12 +72,12 @@ public class StateAwareWindowedStream<T, K, W extends Window> extends WindowedSt
             Function function1,
             @Nullable Function function2) {
         return "Window(" +
-                assigner + ", " +
-                trigger.getClass().getSimpleName() + ", " +
-                (evictor == null ? "" : (evictor.getClass().getSimpleName() + ", ")) +
-                generateFunctionName(function1) +
-                (function2 == null ? "" : (", " + generateFunctionName(function2))) +
-                ")";
+               assigner + ", " +
+               trigger.getClass().getSimpleName() + ", " +
+               (evictor == null ? "" : (evictor.getClass().getSimpleName() + ", ")) +
+               generateFunctionName(function1) +
+               (function2 == null ? "" : (", " + generateFunctionName(function2))) +
+               ")";
     }
 
     private static String generateFunctionName(Function function) {
@@ -97,6 +99,7 @@ public class StateAwareWindowedStream<T, K, W extends Window> extends WindowedSt
         }
     }
 
+
     public <R> SingleOutputStreamOperator<R> reduce(
             ReduceFunction<T> reduceFunction,
             WindowFunction<T, R, K, W> function,
@@ -115,51 +118,73 @@ public class StateAwareWindowedStream<T, K, W extends Window> extends WindowedSt
 
         OneInputStreamOperator<T, R> operator;
 
+        TypeSerializer<StreamRecord<T>> streamRecordSerializer =
+                (TypeSerializer<StreamRecord<T>>) new StreamElementSerializer(visibleInput.getType().createSerializer(getExecutionEnvironment().getConfig()));
 
-        if (visibleEvictor != null) {
-            @SuppressWarnings({"unchecked", "rawtypes"})
-            TypeSerializer<StreamRecord<T>> streamRecordSerializer =
-                    (TypeSerializer<StreamRecord<T>>) new StreamElementSerializer(visibleInput.getType().createSerializer(getExecutionEnvironment().getConfig()));
+        ListStateDescriptor<StreamRecord<T>> stateDesc =
+                new ListStateDescriptor<>("window-contents", streamRecordSerializer);
 
-            ListStateDescriptor<StreamRecord<T>> stateDesc =
-                    new ListStateDescriptor<>("window-contents", streamRecordSerializer);
+        if (this.isFrame()) {
 
-            operator =
-                    new StateAwareSingleBufferWindowOperator<>(visibleWindowAssigner,
-                            visibleWindowAssigner.getWindowSerializer(getExecutionEnvironment().getConfig()),
-                            keySel,
-                            visibleInput.getKeyType().createSerializer(getExecutionEnvironment().getConfig()),
-                            stateDesc,
-                            new InternalIterableWindowFunction<>(new ReduceApplyWindowFunction<>(reduceFunction, function)),
-                            visibleTrigger,
-                            visibleEvictor,
-                            visibleAllowedLateness,
-                            visibleLateDataOutputTag);
+            if (visibleEvictor != null) {
+                operator =
+                        new StateAwareSingleBufferWindowOperator<>(visibleWindowAssigner,
+                                visibleWindowAssigner.getWindowSerializer(getExecutionEnvironment().getConfig()),
+                                keySel,
+                                visibleInput.getKeyType().createSerializer(getExecutionEnvironment().getConfig()),
+                                stateDesc,
+                                new InternalIterableWindowFunction<>(new ReduceApplyWindowFunction<>(reduceFunction, function)),
+                                visibleTrigger,
+                                visibleEvictor,
+                                visibleAllowedLateness,
+                                visibleLateDataOutputTag);
+
+            } else {
+                operator =
+                        new StateAwareMultiBufferWindowOperator<>(visibleWindowAssigner,
+                                visibleWindowAssigner.getWindowSerializer(getExecutionEnvironment().getConfig()),
+                                keySel,
+                                visibleInput.getKeyType().createSerializer(getExecutionEnvironment().getConfig()),
+                                stateDesc,
+                                new InternalIterableWindowFunction<>(new ReduceApplyWindowFunction<>(reduceFunction, function)),
+                                visibleTrigger,
+                                visibleAllowedLateness,
+                                visibleLateDataOutputTag);
+            }
 
         } else {
-            TypeSerializer<StreamRecord<T>> streamRecordSerializer =
-                    (TypeSerializer<StreamRecord<T>>) new StreamElementSerializer(visibleInput.getType().createSerializer(getExecutionEnvironment().getConfig()));
+            if (visibleEvictor != null) {
 
-
-//            ReducingStateDescriptor<StreamRecord<T>> stateDesc = new ReducingStateDescriptor<>("window-contents",
-//                    reduceFunction, streamRecordSerializer);
-
-            ListStateDescriptor<StreamRecord<T>> stateDesc =
-                    new ListStateDescriptor<>("window-contents", streamRecordSerializer);
-            operator =
-                    new StateAwareMultiBufferWindowOperator<>(visibleWindowAssigner,
-                            visibleWindowAssigner.getWindowSerializer(getExecutionEnvironment().getConfig()),
-                            keySel,
-                            visibleInput.getKeyType().createSerializer(getExecutionEnvironment().getConfig()),
-                            stateDesc,
-                            new InternalIterableWindowFunction<>(new ReduceApplyWindowFunction<>(reduceFunction, function)),
-                            visibleTrigger,
-                            visibleAllowedLateness,
-                            visibleLateDataOutputTag);
+                operator =
+                        new FrinkTimeBasedSingleBufferWindowOperator<>(visibleWindowAssigner,
+                                visibleWindowAssigner.getWindowSerializer(getExecutionEnvironment().getConfig()),
+                                keySel,
+                                visibleInput.getKeyType().createSerializer(getExecutionEnvironment().getConfig()),
+                                stateDesc,
+                                new InternalIterableWindowFunction<>(new ReduceApplyWindowFunction<>(reduceFunction, function)),
+                                visibleTrigger,
+                                visibleEvictor,
+                                visibleAllowedLateness,
+                                visibleLateDataOutputTag);
+            } else {
+                operator =
+                        new FrinkTimeBasedMultiBufferWindowOperator<>(
+                                visibleWindowAssigner,
+                                visibleWindowAssigner.getWindowSerializer(getExecutionEnvironment().getConfig()),
+                                keySel,
+                                visibleInput.getKeyType().createSerializer(getExecutionEnvironment().getConfig()),
+                                stateDesc,
+                                new InternalIterableWindowFunction<>(new ReduceApplyWindowFunction<>(reduceFunction, function)),
+                                visibleTrigger,
+                                visibleAllowedLateness,
+                                visibleLateDataOutputTag);
+            }
         }
-
-
         return visibleInput.transform(opName, resultType, operator);
+    }
+
+    private boolean isFrame() {
+        return visibleWindowAssigner instanceof FrameWindowing;
     }
 
 

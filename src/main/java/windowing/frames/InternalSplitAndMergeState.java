@@ -1,4 +1,4 @@
-package windowing;
+package windowing.frames;
 
 import org.apache.flink.runtime.state.internal.InternalMergingState;
 

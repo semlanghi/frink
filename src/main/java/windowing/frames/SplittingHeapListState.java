@@ -1,4 +1,4 @@
-package windowing;
+package windowing.frames;
 
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.runtime.state.StateTransformationFunction;
@@ -7,7 +7,6 @@ import org.apache.flink.runtime.state.internal.InternalMergingState;
 
 import java.util.*;
 import java.util.function.BiPredicate;
-import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 public class SplittingHeapListState<K, N, V> implements InternalSplitAndMergeState<K, N, V, List<V>, Iterable<V>> {

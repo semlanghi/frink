@@ -1,4 +1,4 @@
-package windowing;/*
+package windowing.frames;/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -37,8 +37,7 @@ import org.apache.flink.streaming.runtime.operators.windowing.TimestampedValue;
 import org.apache.flink.streaming.runtime.operators.windowing.functions.InternalWindowFunction;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.util.OutputTag;
-import windowing.frames.FrameState;
-import windowing.frames.FrameWindowing;
+import windowing.ComplexTriggerResult;
 import windowing.windows.DataDrivenWindow;
 
 import java.util.*;
@@ -316,8 +315,6 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
                 .transform(new Function<TimestampedValue<IN>, IN>() {
                     @Override
                     public IN apply(TimestampedValue<IN> input) {
-                        if (input.getValue() == null)
-                            System.out.println("cjsddnasd");
                         return input.getValue();
                     }
                 });

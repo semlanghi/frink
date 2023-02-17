@@ -1,4 +1,4 @@
-package windowing.frames;/*
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -16,15 +16,14 @@ package windowing.frames;/*
  * limitations under the License.
  */
 
-import org.apache.commons.lang3.tuple.ImmutablePair;
-import org.apache.commons.lang3.tuple.Pair;
+package windowing.time;
+
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.state.*;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
-import org.apache.flink.api.common.typeutils.base.LongSerializer;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.api.java.typeutils.TypeExtractor;
@@ -38,25 +37,20 @@ import org.apache.flink.runtime.state.VoidNamespaceSerializer;
 import org.apache.flink.runtime.state.internal.InternalAppendingState;
 import org.apache.flink.runtime.state.internal.InternalListState;
 import org.apache.flink.runtime.state.internal.InternalMergingState;
-import org.apache.flink.shaded.guava18.com.google.common.collect.FluentIterable;
 import org.apache.flink.streaming.api.operators.*;
 import org.apache.flink.streaming.api.windowing.assigners.BaseAlignedWindowAssigner;
 import org.apache.flink.streaming.api.windowing.assigners.MergingWindowAssigner;
 import org.apache.flink.streaming.api.windowing.assigners.WindowAssigner;
 import org.apache.flink.streaming.api.windowing.triggers.Trigger;
 import org.apache.flink.streaming.api.windowing.triggers.TriggerResult;
-import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.streaming.api.windowing.windows.Window;
 import org.apache.flink.streaming.runtime.operators.windowing.MergingWindowSet;
 import org.apache.flink.streaming.runtime.operators.windowing.functions.InternalWindowFunction;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.util.OutputTag;
-import windowing.windows.DataDrivenWindow;
 
 import java.io.Serializable;
-import java.util.*;
-import java.util.function.*;
-import java.util.stream.Collectors;
+import java.util.Collection;
 
 import static org.apache.flink.util.Preconditions.checkArgument;
 import static org.apache.flink.util.Preconditions.checkNotNull;
@@ -71,18 +65,18 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  * {@code Window}. An element can be in multiple panes if it was assigned to multiple windows by the
  * {@code WindowAssigner}.
  *
- * <p>Each pane gets its own instance of the provided {@code Trigger}. This singleBufferTrigger determines when
- * the contents of the pane should be processed to emit results. When a singleBufferTrigger fires,
+ * <p>Each pane gets its own instance of the provided {@code Trigger}. This trigger determines when
+ * the contents of the pane should be processed to emit results. When a trigger fires,
  * the given {@link InternalWindowFunction} is invoked to produce the results that are emitted for
  * the pane to which the {@code Trigger} belongs.
  *
- * @param <K> The type of key returned by the {@code KeySelector}.
- * @param <IN> The type of the incoming elements.
+ * @param <K>   The type of key returned by the {@code KeySelector}.
+ * @param <IN>  The type of the incoming elements.
  * @param <OUT> The type of elements emitted by the {@code InternalWindowFunction}.
- * @param <W> The type of {@code Window} that the {@code WindowAssigner} assigns.
+ * @param <W>   The type of {@code Window} that the {@code WindowAssigner} assigns.
  */
 @Internal
-public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Window>
+public class FrinkTimeBasedMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Window>
         extends AbstractUdfStreamOperator<OUT, InternalWindowFunction<ACC, OUT, K, W>>
         implements OneInputStreamOperator<IN, OUT>, Triggerable<K, W> {
 
@@ -91,13 +85,12 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
     // ------------------------------------------------------------------------
     // Configuration values and user functions
     // ------------------------------------------------------------------------
-    private int stateSize;
 
     protected final WindowAssigner<? super IN, W> windowAssigner;
 
     private final KeySelector<IN, K> keySelector;
 
-    protected final Trigger<? super IN, ? super W> trigger;
+    private final Trigger<? super IN, ? super W> trigger;
 
     private final StateDescriptor<? extends AppendingState<StreamRecord<IN>, Iterable<StreamRecord<IN>>>, ?> windowStateDescriptor;
 
@@ -139,13 +132,13 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
     /**
      * The state in which the window contents is stored. Each window is a namespace
      */
-    private transient InternalAppendingState<K, W, StreamRecord<IN>, List<StreamRecord<IN>>, Iterable<StreamRecord<IN>>> windowState;
+    private transient InternalAppendingState<K, W, IN, ACC, ACC> windowState;
 
     /**
      * The {@link #windowState}, typed to merging state for merging windows.
      * Null if the window state is not mergeable.
      */
-    private transient InternalSplitAndMergeState<K, W, StreamRecord<IN>, List<StreamRecord<IN>>, Iterable<StreamRecord<IN>>> windowMergingState;
+    private transient InternalMergingState<K, W, IN, ACC, ACC> windowMergingState;
 
     /**
      * The state that holds the merging window metadata (the sets that describe what is merged).
@@ -162,10 +155,6 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
 
     protected transient WindowContext processContext;
 
-    protected transient BiFunction<Long, Long, W> windowFactory;
-
-    protected transient BiPredicate<StreamRecord<IN>, W> windowMatcher;
-
     protected transient WindowAssigner.WindowAssignerContext windowAssignerContext;
 
     // ------------------------------------------------------------------------
@@ -174,13 +163,10 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
 
     protected transient InternalTimerService<W> internalTimerService;
 
-    final OutputTag<String> outputTag = new OutputTag<String>("latency") {
-    };
-
     /**
      * Creates a new {@code WindowOperator} based on the given policies and user functions.
      */
-    public StateAwareMultiBufferWindowOperator(
+    public FrinkTimeBasedMultiBufferWindowOperator(
             WindowAssigner<? super IN, W> windowAssigner,
             TypeSerializer<W> windowSerializer,
             KeySelector<IN, K> keySelector,
@@ -195,8 +181,8 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
 
         checkArgument(!(windowAssigner instanceof BaseAlignedWindowAssigner),
                 "The " + windowAssigner.getClass().getSimpleName() + " cannot be used with a WindowOperator. " +
-                        "This assigner is only used with the AccumulatingProcessingTimeWindowOperator and " +
-                        "the AggregatingProcessingTimeWindowOperator");
+                "This assigner is only used with the AccumulatingProcessingTimeWindowOperator and " +
+                "the AggregatingProcessingTimeWindowOperator");
 
         checkArgument(allowedLateness >= 0);
 
@@ -228,90 +214,48 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
         triggerContext = new Context(null, null);
         processContext = new WindowContext(null);
 
-
+        windowAssignerContext = new WindowAssigner.WindowAssignerContext() {
+            @Override
+            public long getCurrentProcessingTime() {
+                return internalTimerService.currentProcessingTime();
+            }
+        };
 
         // create (or restore) the state that hold the actual window contents
         // NOTE - the state may be null in the case of the overriding evicting window operator
         if (windowStateDescriptor != null) {
-            windowState = (InternalAppendingState<K, W, StreamRecord<IN>, List<StreamRecord<IN>>, Iterable<StreamRecord<IN>>>) getOrCreateKeyedState(windowSerializer, windowStateDescriptor);
+            windowState = (InternalAppendingState<K, W, IN, ACC, ACC>) getOrCreateKeyedState(windowSerializer, windowStateDescriptor);
         }
 
-        this.windowAssignerContext = new StateAwareWindowAssigner.StateAwareWindowAssignerContext<IN, W>() {
-            @Override
-            public ValueState<FrameState> getCurrentFrameState(ValueStateDescriptor<FrameState> stateDescriptor) {
-                try {
-                    return StateAwareMultiBufferWindowOperator.this.getPartitionedState(stateDescriptor);
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-                return null;
+        // create the typed and helper states for merging windows
+        if (windowAssigner instanceof MergingWindowAssigner) {
+
+            // store a typed reference for the state of merging windows - sanity check
+            if (windowState instanceof InternalMergingState) {
+                windowMergingState = (InternalMergingState<K, W, IN, ACC, ACC>) windowState;
             }
+            // TODO this sanity check should be here, but is prevented by an incorrect test (pending validation)
+            // TODO see WindowOperatorTest.testCleanupTimerWithEmptyFoldingStateForSessionWindows()
+            // TODO activate the sanity check once resolved
+//			else if (windowState != null) {
+//				throw new IllegalStateException(
+//						"The window uses a merging assigner, but the window state is not mergeable.");
+//			}
 
-            @Override
-            public MapState<Long, FrameState> getPastFrameState(MapStateDescriptor<Long, FrameState> stateDescriptor) {
-                try {
-                    return StateAwareMultiBufferWindowOperator.this.getPartitionedState(stateDescriptor);
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-                return null;
-            }
+            @SuppressWarnings("unchecked") final Class<Tuple2<W, W>> typedTuple = (Class<Tuple2<W, W>>) (Class<?>) Tuple2.class;
 
-            @Override
-            public Iterable<StreamRecord<IN>> getContent(W window) {
-                try {
-                    W stateWindow = getSplittingMergingWindowSet().getStateWindow(window);
-                    windowMergingState.setCurrentNamespace(stateWindow);
-                    return StateAwareMultiBufferWindowOperator.this.windowMergingState.get();
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-                return null;
-            }
+            final TupleSerializer<Tuple2<W, W>> tupleSerializer = new TupleSerializer<>(
+                    typedTuple,
+                    new TypeSerializer[]{windowSerializer, windowSerializer});
 
-            @Override
-            public long getCurrentWatermark() {
-                return StateAwareMultiBufferWindowOperator.this.internalTimerService.currentWatermark();
-            }
+            final ListStateDescriptor<Tuple2<W, W>> mergingSetsStateDescriptor =
+                    new ListStateDescriptor<>("merging-window-set", tupleSerializer);
 
-            @Override
-            public long getAllowedLateness() {
-                return StateAwareMultiBufferWindowOperator.this.allowedLateness;
-            }
-
-            @Override
-            public long getCurrentProcessingTime() {
-                return System.currentTimeMillis();
-            }
-        };
-
-
-        if (windowAssigner instanceof StateAwareWindowAssigner) {
-            this.windowFactory = (BiFunction<Long, Long, W>) ((StateAwareWindowAssigner<IN, W>) windowAssigner).getWindowFactory();
-            this.windowMatcher = ((StateAwareWindowAssigner<IN, W>) windowAssigner).getWindowMatcher();
+            // get the state that stores the merging sets
+            mergingSetsState = (InternalListState<K, VoidNamespace, Tuple2<W, W>>)
+                    getOrCreateKeyedState(VoidNamespaceSerializer.INSTANCE, mergingSetsStateDescriptor);
+            mergingSetsState.setCurrentNamespace(VoidNamespace.INSTANCE);
         }
-
-        // store a typed reference for the state of merging windows - sanity check
-        if (windowState instanceof InternalMergingState) {
-            windowMergingState = new SplittingHeapListState<>((InternalMergingState<K, W, StreamRecord<IN>, List<StreamRecord<IN>>, Iterable<StreamRecord<IN>>>) windowState);
-        }
-
-
-        @SuppressWarnings("unchecked")
-        final Class<Tuple2<W, W>> typedTuple = (Class<Tuple2<W, W>>) (Class<?>) Tuple2.class;
-
-        final TupleSerializer<Tuple2<W, W>> tupleSerializer = new TupleSerializer<>(
-                typedTuple,
-                new TypeSerializer[] {windowSerializer, windowSerializer});
-
-        final ListStateDescriptor<Tuple2<W, W>> mergingSetsStateDescriptor =
-                new ListStateDescriptor<>("merging-window-set", tupleSerializer);
-
-        // get the state that stores the merging sets
-        mergingSetsState = (InternalListState<K, VoidNamespace, Tuple2<W, W>>)
-                getOrCreateKeyedState(VoidNamespaceSerializer.INSTANCE, mergingSetsStateDescriptor);
-        mergingSetsState.setCurrentNamespace(VoidNamespace.INSTANCE);
-
     }
 
     @Override
@@ -332,69 +276,25 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
         windowAssignerContext = null;
     }
 
-    StringBuilder latency = new StringBuilder();
     @Override
     public void processElement(StreamRecord<IN> element) throws Exception {
-        //TODO: MB SCOPE Start
-        //Ahmed Awad
-        latency = new StringBuilder();
-        latency.append("MB_SCOPE_Start=").append(System.nanoTime()).append(",");
         final Collection<W> elementWindows = windowAssigner.assignWindows(
                 element.getValue(), element.getTimestamp(), windowAssignerContext);
 
-
         //if element is handled by none of assigned elementWindows
         boolean isSkippedElement = true;
-        boolean ooo = false;
 
         final K key = this.<K>getKeyedStateBackend().getCurrentKey();
 
-        SplittingMergingWindowSet<W, Long> mergingWindows = getSplittingMergingWindowSet();
-
-
-        //TODO state size naive impl
-
-        stateSize = 0;
-        for (W w: mergingWindows.getKeys())
-        {
-            windowState.setCurrentNamespace(w);
-            Iterable<StreamRecord<IN>> streamRecords = windowState.get();
-            if (streamRecords != null)
-                for (StreamRecord<IN> streamRecord : streamRecords) {
-                    stateSize++;
-
-//                    System.out.println(streamRecord.getValue());
-                }
-        }
-        latency.append("MB_SCOPE_Start2=").append(System.nanoTime()).append(",");
-//        System.out.println("----");
-
-
-
-        latency.append("stateSize=").append(stateSize).append(",");
         if (windowAssigner instanceof MergingWindowAssigner) {
+            MergingWindowSet<W> mergingWindows = getMergingWindowSet();
 
-            Set<W> definitiveElementWindows = new HashSet<>();
-            if (elementWindows.stream().anyMatch(w -> w.maxTimestamp() > element.getTimestamp())) {
-                outOfOrderProcessing(element, key, false, elementWindows, mergingWindows, definitiveElementWindows);
-                ooo = true;
-            } else {
-                definitiveElementWindows.addAll(elementWindows);
-            }
-
-
-            for (W window : definitiveElementWindows
-                    .stream()
-                    .sorted(Comparator.comparingLong(Window::maxTimestamp))
-                    .collect(Collectors.toList())) {
+            for (W window : elementWindows) {
 
                 // adding the new window might result in a merge, in that case the actualWindow
                 // is the merged window and we work with that. If we don't merge then
                 // actualWindow == window
-                //TODO: MB MERGE Start (1st Part)
-                latency.append("MB_MERGE_Start_Part1=").append(System.nanoTime()).append(",");
-
-                W actualWindow = mergingWindows.addWindow(window, new SplittingMergingWindowSet.MergeFunction<W>() {
+                W actualWindow = mergingWindows.addWindow(window, new MergingWindowSet.MergeFunction<W>() {
                     @Override
                     public void merge(W mergeResult,
                                       Collection<W> mergedWindows, W stateWindowResult,
@@ -417,7 +317,7 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
 
                         triggerContext.onMerge(mergedWindows);
 
-                        for (W m: mergedWindows) {
+                        for (W m : mergedWindows) {
                             triggerContext.window = m;
                             triggerContext.clear();
                             deleteCleanupTimer(m);
@@ -427,74 +327,39 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
                         windowMergingState.mergeNamespaces(stateWindowResult, mergedStateWindows);
                     }
                 });
-                //TODO: MB MERGE End (1st Part)
-                latency.append("MB_MERGE_End_Part1=").append(System.nanoTime()).append(",");
-                //TODO: MB SCOPE End
-                latency.append("MB_SCOPE_End=").append(System.nanoTime()).append(",");
 
-
-                 // drop if the window is already late
+                // drop if the window is already late
                 if (isWindowLate(actualWindow)) {
                     mergingWindows.retireWindow(actualWindow);
                     continue;
                 }
                 isSkippedElement = false;
 
-                //TODO: MB ADD Start
-                latency.append("MB_ADD_Start=").append(System.nanoTime()).append(",");
                 W stateWindow = mergingWindows.getStateWindow(actualWindow);
                 if (stateWindow == null) {
                     throw new IllegalStateException("Window " + window + " is not in in-flight window set.");
                 }
 
                 windowState.setCurrentNamespace(stateWindow);
+                windowState.add(element.getValue());
 
-                //Added the precondition since, for frames, events that triggers a window may not belong to it
-                if (windowMatcher.test(element, actualWindow) && !ooo) {
-                    windowState.add(element);
-                }
-                //TODO: MB ADD End
-                latency.append("MB_ADD_End=").append(System.nanoTime()).append(",");
-
-                //TODO: MB REPORT Start
-                latency.append("MB_REPORT_Start=").append(System.nanoTime()).append(",");
                 triggerContext.key = key;
                 triggerContext.window = actualWindow;
 
                 TriggerResult triggerResult = triggerContext.onElement(element);
-                //TODO: MB REPORT End
-                latency.append("MB_REPORT_End=").append(System.nanoTime()).append(",");
+
                 if (triggerResult.isFire()) {
-                    //TODO: MB CONTENT Start
-                    latency.append("MB_CONTENT_Start=").append(System.nanoTime()).append(",");
-                    ACC contents = (ACC) windowState.get();
+                    ACC contents = windowState.get();
                     if (contents == null) {
                         continue;
                     }
-                    //TODO: MB CONTENT End
-                    latency.append("MB_CONTENT_End=").append(System.nanoTime()).append(",");
                     emitWindowContents(actualWindow, contents);
                 }
 
                 if (triggerResult.isPurge()) {
                     windowState.clear();
                 }
-
-                MapState<Long, FrameState> candidateWindowState = getPartitionedState(new MapStateDescriptor<>("candidateWindows", new LongSerializer(), new FrameState.Serializer()));
-
-                //TODO: MB EVICT Start (1st Part)
-                latency.append("MB_EVICT_Start_Part1=").append(System.nanoTime()).append(",");
-                //PURGING
-                if (candidateWindowState.get(((TimeWindow) actualWindow).getStart()).isClosed()) {
-//                    candidateWindowState.remove(((TimeWindow)actualWindow).getStart());
-//                    clearAllState(triggerContext.window, windowState, mergingWindows);
-                    registerCleanupTimer(actualWindow);
-                }
-                //TODO: MB EVICT End (1st Part)
-                latency.append("MB_EVICT_End_Part1=").append(System.nanoTime()).append(",");
-
-
-                this.output.collect(outputTag,new StreamRecord<>(latency.toString()));
+                registerCleanupTimer(actualWindow);
             }
 
             // need to make sure to update the merging state in state
@@ -509,7 +374,7 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
                 isSkippedElement = false;
 
                 windowState.setCurrentNamespace(window);
-                windowState.add(element);
+                windowState.add(element.getValue());
 
                 triggerContext.key = key;
                 triggerContext.window = window;
@@ -517,7 +382,7 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
                 TriggerResult triggerResult = triggerContext.onElement(element);
 
                 if (triggerResult.isFire()) {
-                    ACC contents = (ACC) windowState.get();
+                    ACC contents = windowState.get();
                     if (contents == null) {
                         continue;
                     }
@@ -544,164 +409,19 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
         }
     }
 
-    private void outOfOrderProcessing(StreamRecord<IN> element, K key, boolean elementInserted, Collection<W> currentWindows,
-                                      SplittingMergingWindowSet<W, Long> mergingWindows, Set<W> recomputedWindowsAccumulator) throws Exception {
-
-        recomputedWindowsAccumulator.addAll(currentWindows);
-
-        if (currentWindows.stream()
-                .allMatch(w -> (w instanceof DataDrivenWindow))) {
-
-            //TODO: SPLIT Start
-            latency.append("MB_SPLIT_Start=").append(System.nanoTime()).append(",");
-            // First the window is splitted both in the StateWindow Backend and the MerginWindow Backend
-            windowSplit(currentWindows, mergingWindows, false);
-            //TODO: SPLIT End
-            latency.append("MB_SPLIT_End=").append(System.nanoTime()).append(",");
-
-            if (!elementInserted) {
-                insertElement(element, currentWindows, mergingWindows);
-                elementInserted = true;
-            }
-
-            //TODO: MERGE Start (2nd Part)
-            latency.append("MB_MERGE_Start_Part2=").append(System.nanoTime()).append(",");
-            // Then the merge operation is computed
-            long recomputationTime = windowMerge(key, currentWindows, mergingWindows);
-            //TODO: MERGE End (2nd Part)
-            latency.append("MB_MERGE_End_Part2=").append(System.nanoTime()).append(",");
-
-            // followed by a recomputation in the scope, checking first that there exists a recomputation time (!=-1)
-            Collection<W> recomputedWindows = Collections.emptyList();
-            if (recomputationTime != -1)
-                recomputedWindows = windowAssigner.assignWindows(null, recomputationTime, windowAssignerContext);
-
-            Optional<W> maximumWindowOfCurrentIteration = currentWindows.stream()
-                    .max(Comparator.comparingLong(Window::maxTimestamp));
-
-            // NOTE: this should be always present
-            if (maximumWindowOfCurrentIteration.isPresent()) {
-                if (!recomputedWindows.stream().filter(w -> ((DataDrivenWindow) w).isClosed()).collect(Collectors.toSet()).contains(maximumWindowOfCurrentIteration.get())) {
-                    outOfOrderProcessing(element, key, elementInserted, recomputedWindows, mergingWindows, recomputedWindowsAccumulator);
-                } else {
-                    //TODO: SPLIT Start
-                    latency.append("MB_SPLIT_Start=").append(System.nanoTime()).append(",");
-                    windowSplit(recomputedWindows, mergingWindows, true);
-                    //TODO: SPLIT End
-                    latency.append("MB_SPLIT_End=").append(System.nanoTime()).append(",");
-                }
-            }
-        }
-    }
-
-    private long windowMerge(K key, Collection<W> elementWindows, SplittingMergingWindowSet<W, Long> mergingWindows) {
-        try {
-            Optional<W> optionalStillOpenWindow = elementWindows.stream().filter(w -> !((DataDrivenWindow) w).isClosed()).findFirst();
-
-            if (optionalStillOpenWindow.isPresent()) {
-                W stillOpenWindow = optionalStillOpenWindow.get();
-                ((DataDrivenWindow) stillOpenWindow).setRecomputing(true);
-                mergingWindows.mergeRebalancing(stillOpenWindow, (mergeResult, mergedWindows, stateWindowResult, mergedStateWindows) -> {
-
-                    if ((windowAssigner.isEventTime() && mergeResult.maxTimestamp() + allowedLateness <= internalTimerService.currentWatermark())) {
-                        throw new UnsupportedOperationException("The end timestamp of an " +
-                                                                "event-time window cannot become earlier than the current watermark " +
-                                                                "by merging. Current watermark: " + internalTimerService.currentWatermark() +
-                                                                " window: " + mergeResult);
-                    } else if (!windowAssigner.isEventTime() && mergeResult.maxTimestamp() <= internalTimerService.currentProcessingTime()) {
-                        throw new UnsupportedOperationException("The end timestamp of a " +
-                                                                "processing-time window cannot become earlier than the current processing time " +
-                                                                "by merging. Current processing time: " + internalTimerService.currentProcessingTime() +
-                                                                " window: " + mergeResult);
-                    }
-
-                    triggerContext.key = key;
-                    triggerContext.window = mergeResult;
-
-                    triggerContext.onMerge(mergedWindows);
-
-
-                    for (W m : mergedWindows) {
-                        triggerContext.window = m;
-                        triggerContext.clear();
-                        deleteCleanupTimer(m);
-                    }
-
-                    if (windowAssigner instanceof FrameWindowing) {
-                        ((FrameWindowing<? super IN>) windowAssigner).mergeFrames((DataDrivenWindow) mergeResult, windowAssignerContext);
-                    }
-
-                    // merge the merged state windows into the newly resulting state window
-                    windowMergingState.mergeNamespaces(stateWindowResult, mergedStateWindows);
-                });
-
-                mergingWindows.persist();
-
-                return ((DataDrivenWindow) stillOpenWindow).getStart();
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        return -1;
-    }
-
-    private void insertElement(StreamRecord<IN> element, Collection<W> elementWindows, SplittingMergingWindowSet<W, Long> mergingWindows) {
-        elementWindows.stream()
-                .filter(w -> windowMatcher.test(element, w))
-                .forEach(w -> {
-                    try {
-                        mergingWindows.getStateWindow(w);
-                        windowState.setCurrentNamespace(w);
-                        windowState.add(element);
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                    }
-                });
-    }
-
-    private void windowSplit(Collection<W> elementWindows, SplittingMergingWindowSet<W, Long> mergingWindows, boolean leaveLastWindowClosed) throws Exception {
-        Optional<Long> minimumStart = elementWindows.stream()
-                .filter(w -> w instanceof TimeWindow)
-                .map(w -> ((TimeWindow) w).getStart())
-                .min(Long::compareTo);
-
-        Optional<Long> maximumEnd = elementWindows.stream()
-                .filter(w -> w instanceof TimeWindow)
-                .map(w -> ((TimeWindow) w).getEnd())
-                .max(Long::compareTo);
-
-        if (minimumStart.isPresent() && maximumEnd.isPresent() &&
-            windowMatcher != null && windowFactory != null) {
-            W windowToSplit = windowFactory.apply(minimumStart.get(), maximumEnd.get());
-            W originalWindowToSplit = mergingWindows.getStateWindow(windowToSplit);
-
-            windowMergingState.splitNamespaces(originalWindowToSplit, elementWindows, windowMatcher);
-            List<Pair<Long, W>> splittingPointsStateWindowsPairs = elementWindows.stream()
-                    .map((Function<W, Pair<Long, W>>) w -> new ImmutablePair<>(w.maxTimestamp() + 1, w))
-                    .collect(Collectors.toList());
-
-            mergingWindows.splitMergedWindow(windowToSplit, splittingPointsStateWindowsPairs, (target, splittingPoint) -> {
-                W leftMost = windowFactory.apply(((TimeWindow) target).getStart(), splittingPoint);
-                W rightMost = windowFactory.apply(splittingPoint, target.maxTimestamp() + 1);
-                return new ImmutablePair<>(leftMost, rightMost);
-            }, leaveLastWindowClosed);
-            mergingWindows.persist();
-        }
-    }
-
     @Override
     public void onEventTime(InternalTimer<K, W> timer) throws Exception {
         triggerContext.key = timer.getKey();
         triggerContext.window = timer.getNamespace();
 
-        SplittingMergingWindowSet<W, Long> mergingWindows;
+        MergingWindowSet<W> mergingWindows;
 
         if (windowAssigner instanceof MergingWindowAssigner) {
-            mergingWindows = getSplittingMergingWindowSet();
+            mergingWindows = getMergingWindowSet();
             W stateWindow = mergingWindows.getStateWindow(triggerContext.window);
             if (stateWindow == null) {
                 // Timer firing for non-existent window, this can only happen if a
-                // singleBufferTrigger did not clean up timers. We have already cleared the merging
+                // trigger did not clean up timers. We have already cleared the merging
                 // window and therefore the Trigger state, however, so nothing to do.
                 return;
             } else {
@@ -715,7 +435,7 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
         TriggerResult triggerResult = triggerContext.onEventTime(timer.getTimestamp());
 
         if (triggerResult.isFire()) {
-            ACC contents = (ACC) windowState.get();
+            ACC contents = windowState.get();
             if (contents != null) {
                 emitWindowContents(triggerContext.window, contents);
             }
@@ -724,17 +444,15 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
         if (triggerResult.isPurge()) {
             windowState.clear();
         }
-        //Ahmed: This needs more logic to correlate to other latencies.
-        //TODO: EVICT Start (2nd Part)
+
         if (windowAssigner.isEventTime() && isCleanupTime(triggerContext.window, timer.getTimestamp())) {
-            clearAllState(triggerContext.window, (AppendingState<IN, ACC>) windowState, mergingWindows);
+            clearAllState(triggerContext.window, windowState, mergingWindows);
         }
 
         if (mergingWindows != null) {
             // need to make sure to update the merging state in state
             mergingWindows.persist();
         }
-        //TODO: EVICT End (2nd Part)
     }
 
     @Override
@@ -742,14 +460,14 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
         triggerContext.key = timer.getKey();
         triggerContext.window = timer.getNamespace();
 
-        SplittingMergingWindowSet<W, Long> mergingWindows;
+        MergingWindowSet<W> mergingWindows;
 
         if (windowAssigner instanceof MergingWindowAssigner) {
-            mergingWindows = getSplittingMergingWindowSet();
+            mergingWindows = getMergingWindowSet();
             W stateWindow = mergingWindows.getStateWindow(triggerContext.window);
             if (stateWindow == null) {
                 // Timer firing for non-existent window, this can only happen if a
-                // singleBufferTrigger did not clean up timers. We have already cleared the merging
+                // trigger did not clean up timers. We have already cleared the merging
                 // window and therefore the Trigger state, however, so nothing to do.
                 return;
             } else {
@@ -763,7 +481,7 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
         TriggerResult triggerResult = triggerContext.onProcessingTime(timer.getTimestamp());
 
         if (triggerResult.isFire()) {
-            ACC contents = (ACC) windowState.get();
+            ACC contents = windowState.get();
             if (contents != null) {
                 emitWindowContents(triggerContext.window, contents);
             }
@@ -774,7 +492,7 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
         }
 
         if (!windowAssigner.isEventTime() && isCleanupTime(triggerContext.window, timer.getTimestamp())) {
-            clearAllState(triggerContext.window, (AppendingState<IN, ACC>) windowState, mergingWindows);
+            clearAllState(triggerContext.window, windowState, mergingWindows);
         }
 
         if (mergingWindows != null) {
@@ -793,7 +511,7 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
     private void clearAllState(
             W window,
             AppendingState<IN, ACC> windowState,
-            SplittingMergingWindowSet<W, Long> mergingWindows) throws Exception {
+            MergingWindowSet<W> mergingWindows) throws Exception {
         windowState.clear();
         triggerContext.clear();
         processContext.window = window;
@@ -809,16 +527,9 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
      */
     @SuppressWarnings("unchecked")
     private void emitWindowContents(W window, ACC contents) throws Exception {
-
-        FluentIterable<IN> projectedContents = FluentIterable.from((Iterable<StreamRecord<IN>>) contents)
-                .transform(input -> {
-                    if (input.getValue() == null)
-                        System.out.println("cjsddnasd");
-                    return input.getValue();
-                });
         timestampedCollector.setAbsoluteTimestamp(window.maxTimestamp());
         processContext.window = window;
-        userFunction.process(triggerContext.key, window, processContext, (ACC) projectedContents, timestampedCollector);
+        userFunction.process(triggerContext.key, window, processContext, contents, timestampedCollector);
     }
 
     /**
@@ -837,12 +548,6 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
      * <p>The caller must also ensure to properly persist changes to state using
      * {@link MergingWindowSet#persist()}.
      */
-    protected SplittingMergingWindowSet<W, Long> getSplittingMergingWindowSet() throws Exception {
-        @SuppressWarnings("unchecked")
-        MergingWindowAssigner<? super IN, W> mergingAssigner = (MergingWindowAssigner<? super IN, W>) windowAssigner;
-        return new SplittingMergingWindowSet<>(mergingAssigner, mergingSetsState);
-    }
-
     protected MergingWindowSet<W> getMergingWindowSet() throws Exception {
         @SuppressWarnings("unchecked")
         MergingWindowAssigner<? super IN, W> mergingAssigner = (MergingWindowAssigner<? super IN, W>) windowAssigner;
@@ -1048,7 +753,7 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
 
         @Override
         public KeyedStateStore globalState() {
-            return StateAwareMultiBufferWindowOperator.this.getKeyedStateStore();
+            return FrinkTimeBasedMultiBufferWindowOperator.this.getKeyedStateStore();
         }
 
         @Override
@@ -1078,7 +783,7 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
 
         @Override
         public MetricGroup getMetricGroup() {
-            return StateAwareMultiBufferWindowOperator.this.getMetricGroup();
+            return FrinkTimeBasedMultiBufferWindowOperator.this.getMetricGroup();
         }
 
         public long getCurrentWatermark() {
@@ -1118,7 +823,7 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
         @SuppressWarnings("unchecked")
         public <S extends State> S getPartitionedState(StateDescriptor<S, ?> stateDescriptor) {
             try {
-                return StateAwareMultiBufferWindowOperator.this.getPartitionedState(window, windowSerializer, stateDescriptor);
+                return FrinkTimeBasedMultiBufferWindowOperator.this.getPartitionedState(window, windowSerializer, stateDescriptor);
             } catch (Exception e) {
                 throw new RuntimeException("Could not retrieve state", e);
             }
@@ -1170,15 +875,15 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
         }
 
         public TriggerResult onElement(StreamRecord<IN> element) throws Exception {
-            return trigger.onElement(element.getValue(), element.getTimestamp(), window, this);
+            return getTrigger().onElement(element.getValue(), element.getTimestamp(), window, this);
         }
 
         public TriggerResult onProcessingTime(long time) throws Exception {
-            return trigger.onProcessingTime(time, window, this);
+            return getTrigger().onProcessingTime(time, window, this);
         }
 
         public TriggerResult onEventTime(long time) throws Exception {
-            return trigger.onEventTime(time, window, this);
+            return getTrigger().onEventTime(time, window, this);
         }
 
         public void onMerge(Collection<W> mergedWindows) throws Exception {
@@ -1223,15 +928,15 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
             if (this == o) {
                 return true;
             }
-            if (o == null || getClass() != o.getClass()){
+            if (o == null || getClass() != o.getClass()) {
                 return false;
             }
 
             Timer<?, ?> timer = (Timer<?, ?>) o;
 
             return timestamp == timer.timestamp
-                    && key.equals(timer.key)
-                    && window.equals(timer.window);
+                   && key.equals(timer.key)
+                   && window.equals(timer.window);
 
         }
 
