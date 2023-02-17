@@ -1,4 +1,4 @@
-/*
+package windowing;/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -15,8 +15,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-package windowing;
 
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.annotation.VisibleForTesting;
@@ -54,10 +52,10 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  * {@link InternalWindowFunction} and after the window evaluation gets triggered by a
  * {@link org.apache.flink.streaming.api.windowing.triggers.Trigger}.
  *
- * @param <K> The type of key returned by the {@code KeySelector}.
- * @param <IN> The type of the incoming elements.
+ * @param <K>   The type of key returned by the {@code KeySelector}.
+ * @param <IN>  The type of the incoming elements.
  * @param <OUT> The type of elements emitted by the {@code InternalWindowFunction}.
- * @param <W> The type of {@code Window} that the {@code WindowAssigner} assigns.
+ * @param <W>   The type of {@code Window} that the {@code WindowAssigner} assigns.
  */
 @Internal
 public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
@@ -84,8 +82,10 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
     // ------------------------------------------------------------------------
 
     // A stream to report timestamps of processing elements
-    final OutputTag<String> latencyStream = new OutputTag<String>("latency"){};
-    final OutputTag<String> stateSizeStream = new OutputTag<String>("stateSize"){};
+    final OutputTag<String> latencyStream = new OutputTag<String>("latency") {
+    };
+    final OutputTag<String> stateSizeStream = new OutputTag<String>("stateSize") {
+    };
 
     public StateAwareSingleBufferWindowOperator(WindowAssigner<? super IN, W> windowAssigner,
                                                 TypeSerializer<W> windowSerializer,
@@ -124,35 +124,35 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
         StringBuilder latency = new StringBuilder();
         StringBuilder stateSize = new StringBuilder();
         //TODO: SB ADD Start
-        latency.append("SB_ADD_Start="+System.nanoTime()+",");
+        latency.append(System.nanoTime() + ",");
         evictingWindowState.setCurrentNamespace(window);
         evictingWindowState.add(element);
 
         //TODO: SB ADD End
-        latency.append("SB_ADD_End="+System.nanoTime()+",");
+        latency.append(System.nanoTime() + ",");
         triggerContext.key = key;
         triggerContext.window = window;
         evictorContext.key = key;
         evictorContext.window = window;
 
-        ComplexTriggerResult complexTriggerResult = this.frameTrigger.onWindow(element.getValue(), element.getTimestamp(), triggerContext);
-        latency.append(complexTriggerResult.latencyInfo).append("SB_Report_End=").append(System.nanoTime()).append(",");
+        ComplexTriggerResult<DataDrivenWindow> complexTriggerResult = this.frameTrigger.onWindow(element.getValue(), element.getTimestamp(), triggerContext);
+        latency.append(complexTriggerResult.latencyInfo).append(System.nanoTime()).append(",");
 
         //TODO: SB Content Start
-        latency.append("SB_Content_Start="+System.nanoTime()+",");
+        latency.append(System.nanoTime() + ",");
         Iterable<StreamRecord<IN>> contents = evictingWindowState.get();
         if (contents == null) {
             // if we have no state, there is nothing to do
             return;
         }
 
-        long count =0;
-        for (Object obj : contents)
-        {
+        long count = 0;
+        for (Object obj : contents) {
             count++;
         }
-        latency.append("stateSize="+count+",");
-        latency.append("SB_StateSizing_End=" + System.nanoTime() + ",");
+        //TODO state size
+        latency.append(count + ",");
+        latency.append(System.nanoTime() + ",");
 
         // Work around type system restrictions...
         FluentIterable<TimestampedValue<IN>> recordsWithTimestamp = FluentIterable
@@ -167,14 +167,14 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
         SortedMap<DataDrivenWindow, ? extends Iterable<TimestampedValue<IN>>> iterables =
                 extractData(recordsWithTimestamp, complexTriggerResult.resultWindows);
         //TODO: SB Content End
-        latency.append("SB_Content_End="+System.nanoTime()+",");
+        latency.append(System.nanoTime() + ",");
         //Ahmed: Will do the iteration to compute the state here to avoid affecting the latency of content delivery
 
         // The eviction before the emission of the output is not necessary
 
         for (DataDrivenWindow tmp : complexTriggerResult.resultWindows) {
             if (complexTriggerResult.internalResult.isFire()) {
-                if(iterables.containsKey(tmp))
+                if (iterables.containsKey(tmp))
                     emitWindowContents(window, iterables.get(tmp), evictingWindowState);
             }
         }
@@ -183,26 +183,27 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
         // this is not usefult for a time-based eviction. Thus, we pass instead of the size, the allowed lateness
 
         //TODO: SB Evict Start
-        latency.append("SB_Evict_Start="+System.nanoTime()+",");
-        evictorContext.evictAfter(recordsWithTimestamp, (int) (this.allowedLateness/1000));
+        latency.append(System.nanoTime() + ",");
+        evictorContext.evictAfter(recordsWithTimestamp, (int) (this.allowedLateness / 1000));
         //TODO: SB Evict End
-        latency.append("SB_Evict_End="+System.nanoTime());
+        latency.append(System.nanoTime());
         //Emit to the side output stream
-        this.output.collect(latencyStream,new StreamRecord<String>(latency.toString()));
-        this.output.collect(stateSizeStream,new StreamRecord<String>(stateSize.toString()));
+        this.output.collect(latencyStream, new StreamRecord<String>(latency.toString()));
+        this.output.collect(stateSizeStream, new StreamRecord<String>(stateSize.toString()));
     }
 
     /**
      * This method extracts the related events given a set of windows from the State Backend.
+     *
      * @param resultCollection
      * @param resultWindows
      * @return a map object containing the windows mapped to the related set of events
      */
-    private SortedMap<DataDrivenWindow, ? extends Iterable<TimestampedValue<IN>>> extractData(Iterable<TimestampedValue<IN>> resultCollection, Collection<DataDrivenWindow> resultWindows){
+    private SortedMap<DataDrivenWindow, ? extends Iterable<TimestampedValue<IN>>> extractData(Iterable<TimestampedValue<IN>> resultCollection, Collection<DataDrivenWindow> resultWindows) {
 
         SortedMap<DataDrivenWindow, List<TimestampedValue<IN>>> internalWindows = new TreeMap<>(Comparator.comparingLong(DataDrivenWindow::getEnd));
         resultCollection.forEach(inTimestampedValue -> resultWindows.stream()
-                .filter(window -> window.getStart()<=inTimestampedValue.getTimestamp() && window.getEnd()> inTimestampedValue.getTimestamp())
+                .filter(window -> window.getStart() <= inTimestampedValue.getTimestamp() && window.getEnd() > inTimestampedValue.getTimestamp())
                 .findFirst()
                 .ifPresent(window -> {
                     internalWindows.putIfAbsent(window, new ArrayList<>());
@@ -315,7 +316,7 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
                 .transform(new Function<TimestampedValue<IN>, IN>() {
                     @Override
                     public IN apply(TimestampedValue<IN> input) {
-                        if(input.getValue()==null)
+                        if (input.getValue() == null)
                             System.out.println("cjsddnasd");
                         return input.getValue();
                     }
@@ -374,7 +375,7 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
             return key;
         }
 
-        void evictAfter(Iterable<TimestampedValue<IN>>  elements, int allowedLateness) {
+        void evictAfter(Iterable<TimestampedValue<IN>> elements, int allowedLateness) {
             evictor.evictAfter((Iterable) elements, allowedLateness, window, this);
         }
     }
@@ -389,7 +390,7 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
                 getOrCreateKeyedState(windowSerializer, evictingWindowStateDescriptor);
     }
 
-    protected class StateAwareContext extends Context{
+    protected class StateAwareContext extends Context {
 
         public StateAwareContext(K key, W window) {
             super(key, window);
@@ -400,7 +401,8 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
                 return getPartitionedState(stateDescriptor);
             } catch (Exception e) {
                 e.printStackTrace();
-            } return null;
+            }
+            return null;
         }
 
         public MapState<Long, FrameState> getPastFrameState(MapStateDescriptor<Long, FrameState> stateDescriptor) {
@@ -408,7 +410,8 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
                 return getPartitionedState(stateDescriptor);
             } catch (Exception e) {
                 e.printStackTrace();
-            } return null;
+            }
+            return null;
         }
 
         public Iterable<StreamRecord<IN>> getContent(W window) {
@@ -417,10 +420,11 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
                 return StateAwareSingleBufferWindowOperator.this.evictingWindowState.get();
             } catch (Exception e) {
                 e.printStackTrace();
-            } return null;
+            }
+            return null;
         }
 
-        public long getAllowedLateness(){
+        public long getAllowedLateness() {
             return allowedLateness;
         }
 
@@ -428,6 +432,7 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
         /**
          * NB: I will use this method to check the trigger on the window, NOT on the processing time
          * Artificial Solution, but doable for now
+         *
          * @param time
          * @return
          * @throws Exception
@@ -445,7 +450,7 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
     }
 
     @Override
-    public void dispose() throws Exception{
+    public void dispose() throws Exception {
         super.dispose();
         evictorContext = null;
     }
