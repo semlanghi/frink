@@ -26,6 +26,7 @@ public class SplittingHeapListState<K, N, V> implements InternalSplitAndMergeSta
 //
 //    private final MergeTransformation mergeTransformation;
 
+
     protected SplittingHeapListState(
             InternalMergingState<K, N, V, List<V>, Iterable<V>> heapListState) {
         this.internalMergingState = (InternalListState<K, N, V>) heapListState;
@@ -38,6 +39,14 @@ public class SplittingHeapListState<K, N, V> implements InternalSplitAndMergeSta
 //        this.mergeTransformation = new MergeTransformation();
     }
 
+    @Override
+    public int size() {
+        try {
+            return internalMergingState.getInternal().size();
+        } catch (Exception e) {
+            return -1;
+        }
+    }
 
 
     @Override
@@ -92,7 +101,8 @@ public class SplittingHeapListState<K, N, V> implements InternalSplitAndMergeSta
             return internalMergingState.getInternal();
         } catch (Exception e) {
             e.printStackTrace();
-        } return null;
+        }
+        return null;
     }
 
     @Override
@@ -128,7 +138,7 @@ public class SplittingHeapListState<K, N, V> implements InternalSplitAndMergeSta
         return a;
     }
 
-    public void splitNamespaces(N target, Collection<N> splittedTargets, BiPredicate<V, N> matchingPredicate){
+    public void splitNamespaces(N target, Collection<N> splittedTargets, BiPredicate<V, N> matchingPredicate) {
 
         // Take and remove the old window metadata
         try {
@@ -138,7 +148,7 @@ public class SplittingHeapListState<K, N, V> implements InternalSplitAndMergeSta
             internalMergingState.clear();
 
             // If not element set is found the windows are new, so do nothing
-            if(oldElementSet == null)
+            if (oldElementSet == null)
                 return;
 
             // For all the namespaces, search the corresponding elements, then add it to the state table
@@ -156,7 +166,6 @@ public class SplittingHeapListState<K, N, V> implements InternalSplitAndMergeSta
             e.printStackTrace();
         }
     }
-
 
 
 }

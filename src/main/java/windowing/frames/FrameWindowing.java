@@ -590,13 +590,12 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
             return TriggerResult.CONTINUE;
         }
 
-        public ComplexTriggerResult<DataDrivenWindow> onWindow(I element,
-                                             long timestamp,
-                                             TriggerContext ctx) {
+        public ComplexTriggerResult<DataDrivenWindow> onWindow(I element, long timestamp, TriggerContext ctx) {
 
-            StringBuilder sb = new StringBuilder();
+            StringBuilder fields = new StringBuilder();
             //TODO: SB Scope Start
-            sb.append(System.nanoTime()).append(",");
+            fields.append("find_start_2=").append(System.nanoTime()).append(",");
+
             long elementLong = toLongFunctionValue.applyAsLong(element);
 
             StateAwareContextWrapper<I, DataDrivenWindow> stateAwareContextWrapper = new StateAwareTriggerContextWrapper<>(ctx);
@@ -609,6 +608,9 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
                 finalWindows.add(candidateTimeWindow.getFinalWindow());
             }
 
+            //TODO number of windows
+            fields.append("state_size_windows=").append(finalWindows.size()).append(",");
+
             SortedSet<DataDrivenWindow> definitiveElementWindows = new TreeSet<>(Comparator.comparingLong(TimeWindow::getStart));
             if (finalWindows.stream().anyMatch(w -> w.maxTimestamp() > timestamp)) {
                 outOfOrderProcessing(finalWindows, definitiveElementWindows, stateAwareContextWrapper);
@@ -616,15 +618,16 @@ public abstract class FrameWindowing<I> extends StateAwareWindowAssigner<I, Data
                 definitiveElementWindows.addAll(finalWindows);
             }
             //TODO: SB Scope End
-            sb.append(System.nanoTime()).append(",");
+            fields.append("find_end_2=").append(System.nanoTime()).append(",");
+
             //TODO: SB Report Start
             //Pre-filter: in case no windows is available, optimization, without going to the singleBufferEvictor
-            sb.append(System.nanoTime()).append(",");
+            fields.append("report_start=").append(System.nanoTime()).append(",");
             if (!definitiveElementWindows.isEmpty()) {
 
-                return new ComplexTriggerResult(TriggerResult.FIRE, definitiveElementWindows, sb.toString());
+                return new ComplexTriggerResult(TriggerResult.FIRE, definitiveElementWindows, fields.toString());
             }
-            return new ComplexTriggerResult(TriggerResult.CONTINUE, Collections.emptyList(), sb.toString());
+            return new ComplexTriggerResult(TriggerResult.CONTINUE, Collections.emptyList(), fields.toString());
             //TODO: SB Report End
             //Ahmed Awad: I will handle that in the method that calls the onWindow method.
         }

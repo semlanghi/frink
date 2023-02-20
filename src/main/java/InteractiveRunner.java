@@ -26,7 +26,7 @@ import java.util.function.ToLongFunction;
 
 public class InteractiveRunner {
 
-    private static final String JOB_TYPE = "frame_single_tumbling";
+    private static final String JOB_TYPE = "frame_single_aggregate";
     private static final int ALLOWED_LATENESS = 5;
 
     public static void main(String[] args) throws Exception {
@@ -96,7 +96,7 @@ public class InteractiveRunner {
             else if (JOB_TYPE.endsWith("tumbling")) {
                 ReduceFunction<SpeedEvent> speedEventReduceFunction = (value1, value2) -> new SpeedEvent(value1.getKey(), Math.max(value1.getTimestamp(), value2.getTimestamp()), value1.getValue() + value2.getValue());
                 PassThroughWindowFunction<Object, Window, Object> function = new PassThroughWindowFunction<>();
-                speedEventDataStreamSink = extendedKeyedStream.timeTumbling(5000L)
+                speedEventDataStreamSink = extendedKeyedStream.timeSliding(5000L, 1000L)
                         .allowedLateness(Time.seconds(ALLOWED_LATENESS))
                         .reduce(
                                 speedEventReduceFunction,

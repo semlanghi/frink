@@ -156,7 +156,7 @@ public class StateAwareWindowedStream<T, K, W extends Window> extends WindowedSt
             if (visibleEvictor != null) {
 
                 operator =
-                        new FrinkTimeBasedSingleBufferWindowOperator<>(visibleWindowAssigner,
+                        new StateAwareSingleBufferWindowOperator<>(visibleWindowAssigner,
                                 visibleWindowAssigner.getWindowSerializer(getExecutionEnvironment().getConfig()),
                                 keySel,
                                 visibleInput.getKeyType().createSerializer(getExecutionEnvironment().getConfig()),

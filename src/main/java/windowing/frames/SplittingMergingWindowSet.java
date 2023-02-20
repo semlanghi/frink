@@ -54,6 +54,11 @@ public class SplittingMergingWindowSet<W extends Window, P> {
      * Our window assigner.
      */
     private final MergingWindowAssigner<?, W> windowAssigner;
+    private int size;
+
+    public int size() {
+        return size;
+    }
 
     /**
      * Restores a {@link SplittingMergingWindowSet} from the given state.
@@ -64,12 +69,14 @@ public class SplittingMergingWindowSet<W extends Window, P> {
 
         Iterable<Tuple2<W, W>> windowState = state.get();
         if (windowState != null) {
-            for (Tuple2<W, W> window: windowState) {
+            for (Tuple2<W, W> window : windowState) {
                 mapping.put(window.f0, window.f1);
             }
         }
 
         this.state = state;
+        this.size = 0;
+//        state.get().iterator().forEachRemaining(w -> size++);
 
         initialMapping = new HashMap<>();
         initialMapping.putAll(mapping);
@@ -112,7 +119,7 @@ public class SplittingMergingWindowSet<W extends Window, P> {
         }
     }
 
-    public void splitMergedWindow(W targetWindow, List<Pair<P,W>> splittingPointStateWindows, Splitter<W,P> splitter, boolean leaveLastWindowClosed){
+    public void splitMergedWindow(W targetWindow, List<Pair<P, W>> splittingPointStateWindows, Splitter<W, P> splitter, boolean leaveLastWindowClosed) {
 
         /*
         First thing: remove the target window, due to the asymmetry between merging and state windows we cannot use
@@ -120,6 +127,7 @@ public class SplittingMergingWindowSet<W extends Window, P> {
         its boundaries, e.g., [1000,1001] -> {(event1, ts:1000), (event2, ts: 3000)
          */
         this.mapping.remove(targetWindow);
+        this.size--;
 
         W focusedWindow = targetWindow;
         W previousWindow = null;
@@ -131,16 +139,20 @@ public class SplittingMergingWindowSet<W extends Window, P> {
         e.g. 2000 -> [1000,1001] -> (WindowMergingState) {1000,1050,1999}
          */
         splittingPointStateWindows.sort(Comparator.comparingLong(o -> o.getRight().maxTimestamp()));
-        for (Pair<P,W> tmp: splittingPointStateWindows) {
-            Pair<W,W> splittedRemains = splitter.split(focusedWindow, tmp.getLeft());
+        for (Pair<P, W> tmp : splittingPointStateWindows) {
+            Pair<W, W> splittedRemains = splitter.split(focusedWindow, tmp.getLeft());
             //Check for threshold window
-            if(((TimeWindow)splittedRemains.getLeft()).getStart()==((TimeWindow)tmp.getRight()).getStart())
+            if (((TimeWindow) splittedRemains.getLeft()).getStart() == ((TimeWindow) tmp.getRight()).getStart()) {
                 this.mapping.put(splittedRemains.getLeft(), tmp.getRight());
-            else this.mapping.put(tmp.getRight(), tmp.getRight());
+                this.size++;
+            } else {
+                this.mapping.put(tmp.getRight(), tmp.getRight());
+                this.size++;
+            }
             previousWindow = splittedRemains.getLeft();
             focusedWindow = splittedRemains.getRight();
         }
-        if(previousWindow instanceof DataDrivenWindow)
+        if (previousWindow instanceof DataDrivenWindow)
             ((DataDrivenWindow) previousWindow).setClosed(leaveLastWindowClosed);
     }
 
@@ -160,7 +172,7 @@ public class SplittingMergingWindowSet<W extends Window, P> {
                 });
 
         // perform the merge
-        for (Map.Entry<W, Collection<W>> c: mergeResults.entrySet()) {
+        for (Map.Entry<W, Collection<W>> c : mergeResults.entrySet()) {
             W mergeResult = c.getKey();
             Collection<W> mergedWindows = c.getValue();
 
@@ -170,11 +182,12 @@ public class SplittingMergingWindowSet<W extends Window, P> {
 
             // figure out the state windows that we are merging
             List<W> mergedStateWindows = new ArrayList<>();
-            for (W mergedWindow: mergedWindows) {
+            for (W mergedWindow : mergedWindows) {
                 W res = this.mapping.remove(mergedWindow);
+                this.size--;
                 if (res != null) {
-                    if(mergedStateWindow != null) {
-                        if (mergedStateWindow.maxTimestamp() > res.maxTimestamp()){
+                    if (mergedStateWindow != null) {
+                        if (mergedStateWindow.maxTimestamp() > res.maxTimestamp()) {
                             mergedStateWindows.add(mergedStateWindow);
                             mergedStateWindow = res;
                         } else mergedStateWindows.add(res);
@@ -183,7 +196,7 @@ public class SplittingMergingWindowSet<W extends Window, P> {
             }
 
             this.mapping.put(mergeResult, mergedStateWindow);
-
+            this.size++;
             if (!(mergedWindows.size() == 1)) {
                 mergeFunction.merge(mergeResult,
                         mergedWindows,
@@ -207,11 +220,10 @@ public class SplittingMergingWindowSet<W extends Window, P> {
      * <p>If the new window is merged, the {@code MergeFunction} callback arguments also don't
      * contain the new window as part of the list of merged windows.
      *
-     * @param newWindow The new {@code Window} to add.
+     * @param newWindow     The new {@code Window} to add.
      * @param mergeFunction The callback to be invoked in case a merge occurs.
-     *
      * @return The {@code Window} that new new {@code Window} ended up in. This can also be the
-     *          the new {@code Window} itself in case no merge occurred.
+     * the new {@code Window} itself in case no merge occurred.
      * @throws Exception
      */
     public W addWindow(W newWindow, MergeFunction<W> mergeFunction) throws Exception {
@@ -234,7 +246,7 @@ public class SplittingMergingWindowSet<W extends Window, P> {
         boolean mergedNewWindow = false;
 
         // perform the merge
-        for (Map.Entry<W, Collection<W>> c: mergeResults.entrySet()) {
+        for (Map.Entry<W, Collection<W>> c : mergeResults.entrySet()) {
             W mergeResult = c.getKey();
             Collection<W> mergedWindows = c.getValue();
 
@@ -251,15 +263,16 @@ public class SplittingMergingWindowSet<W extends Window, P> {
 
             // figure out the state windows that we are merging
             List<W> mergedStateWindows = new ArrayList<>();
-            for (W mergedWindow: mergedWindows) {
+            for (W mergedWindow : mergedWindows) {
                 W res = this.mapping.remove(mergedWindow);
+                this.size--;
                 if (res != null) {
                     mergedStateWindows.add(res);
                 }
             }
 
             this.mapping.put(mergeResult, mergedStateWindow);
-
+            this.size++;
             // don't put the target state window into the merged windows
             mergedStateWindows.remove(mergedStateWindow);
 
@@ -270,6 +283,7 @@ public class SplittingMergingWindowSet<W extends Window, P> {
                 mergeFunction.merge(mergeResult,
                         mergedWindows,
                         this.mapping.get(mergeResult),
+
                         mergedStateWindows);
             }
         }
@@ -277,6 +291,7 @@ public class SplittingMergingWindowSet<W extends Window, P> {
         // the new window created a new, self-contained window without merging
         if (mergeResults.isEmpty() || (resultWindow.equals(newWindow) && !mergedNewWindow)) {
             this.mapping.put(resultWindow, resultWindow);
+            this.size++;
         }
 
         return resultWindow;
@@ -284,6 +299,7 @@ public class SplittingMergingWindowSet<W extends Window, P> {
 
     /**
      * Callback for {@link #addWindow(Window, MergeFunction)}.
+     *
      * @param <W>
      */
     public interface MergeFunction<W> {
@@ -291,23 +307,23 @@ public class SplittingMergingWindowSet<W extends Window, P> {
         /**
          * This gets called when a merge occurs.
          *
-         * @param mergeResult The newly resulting merged {@code Window}.
-         * @param mergedWindows The merged {@code Window Windows}.
-         * @param stateWindowResult The state window of the merge result.
+         * @param mergeResult        The newly resulting merged {@code Window}.
+         * @param mergedWindows      The merged {@code Window Windows}.
+         * @param stateWindowResult  The state window of the merge result.
          * @param mergedStateWindows The merged state windows.
          * @throws Exception
          */
         void merge(W mergeResult, Collection<W> mergedWindows, W stateWindowResult, Collection<W> mergedStateWindows) throws Exception;
     }
 
-    public Collection<W> getKeys(){
+    public Collection<W> getKeys() {
         return mapping.values();
     }
 
     @Override
     public String toString() {
         return "MergingWindowSet{" +
-                "windows=" + mapping +
-                '}';
+               "windows=" + mapping +
+               '}';
     }
 }

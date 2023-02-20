@@ -81,10 +81,8 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
     // ------------------------------------------------------------------------
 
     // A stream to report timestamps of processing elements
-    final OutputTag<String> latencyStream = new OutputTag<String>("latency") {
-    };
-    final OutputTag<String> stateSizeStream = new OutputTag<String>("stateSize") {
-    };
+    private StringBuilder fields;
+    private StringBuilder tags;
 
     public StateAwareSingleBufferWindowOperator(WindowAssigner<? super IN, W> windowAssigner,
                                                 TypeSerializer<W> windowSerializer,
@@ -109,8 +107,17 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
     @Override
     public void processElement(StreamRecord<IN> element) throws Exception {
         //This operation is not really necessary, as the window returned is always the GlobalWindow
+
+        fields = new StringBuilder();
+        tags = new StringBuilder();
+        //TODO: MB find Start
+
+        tags.append("method=processElement");
+
+        fields.append("find_start_1=").append(System.nanoTime()).append(",");
         final Collection<W> elementWindows = windowAssigner.assignWindows(
                 element.getValue(), element.getTimestamp(), windowAssignerContext);
+        fields.append("find_end_1=").append(System.nanoTime()).append(",");
 
         final K key = this.<K>getKeyedStateBackend().getCurrentKey();
 
@@ -120,59 +127,48 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
         // No check on the merging window assigner (WA), being single buffer it uses only GlobalWindows as the WA
         // N.B.: Always one window, i.e., the Global Window
         W window = elementWindows.iterator().next();
-        StringBuilder latency = new StringBuilder();
-        StringBuilder stateSize = new StringBuilder();
+
+
         //TODO: SB ADD Start
-        latency.append(System.nanoTime() + ",");
+        fields.append("add_start=").append(System.nanoTime()).append(",");
         evictingWindowState.setCurrentNamespace(window);
         evictingWindowState.add(element);
 
         //TODO: SB ADD End
-        latency.append(System.nanoTime() + ",");
+        fields.append("add_end=").append(System.nanoTime()).append(",");
+
         triggerContext.key = key;
         triggerContext.window = window;
         evictorContext.key = key;
         evictorContext.window = window;
 
         ComplexTriggerResult<DataDrivenWindow> complexTriggerResult = this.frameTrigger.onWindow(element.getValue(), element.getTimestamp(), triggerContext);
-        latency.append(complexTriggerResult.latencyInfo).append(System.nanoTime()).append(",");
+        fields.append(complexTriggerResult.latencyInfo).append("report_end=").append(System.nanoTime()).append(",");
 
-        //TODO: SB Content Start
-        latency.append(System.nanoTime() + ",");
+        //TODO: SB EMIT Start
+        fields.append("content_start=").append(System.nanoTime()).append(",");
         Iterable<StreamRecord<IN>> contents = evictingWindowState.get();
+
         if (contents == null) {
             // if we have no state, there is nothing to do
             return;
         }
 
-        long count = 0;
-        for (Object obj : contents) {
-            count++;
-        }
-        //TODO state size
-        latency.append(count + ",");
-        latency.append(System.nanoTime() + ",");
-
         // Work around type system restrictions...
         FluentIterable<TimestampedValue<IN>> recordsWithTimestamp = FluentIterable
                 .from(contents)
-                .transform(new Function<StreamRecord<IN>, TimestampedValue<IN>>() {
-                    @Override
-                    public TimestampedValue<IN> apply(StreamRecord<IN> input) {
-                        return TimestampedValue.from(input);
-                    }
-                });
+                .transform(input -> TimestampedValue.from(input));
 
         SortedMap<DataDrivenWindow, ? extends Iterable<TimestampedValue<IN>>> iterables =
                 extractData(recordsWithTimestamp, complexTriggerResult.resultWindows);
+
         //TODO: SB Content End
-        latency.append(System.nanoTime() + ",");
+        fields.append("content_end=").append(System.nanoTime()).append(",");
         //Ahmed: Will do the iteration to compute the state here to avoid affecting the latency of content delivery
 
         // The eviction before the emission of the output is not necessary
-
-        for (DataDrivenWindow tmp : complexTriggerResult.resultWindows) {
-            if (complexTriggerResult.internalResult.isFire()) {
+        if (complexTriggerResult.internalResult.isFire()) {
+            for (DataDrivenWindow tmp : complexTriggerResult.resultWindows) {
                 if (iterables.containsKey(tmp))
                     emitWindowContents(window, iterables.get(tmp), evictingWindowState);
             }
@@ -182,13 +178,22 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
         // this is not usefult for a time-based eviction. Thus, we pass instead of the size, the allowed lateness
 
         //TODO: SB Evict Start
-        latency.append(System.nanoTime() + ",");
+        fields.append("evict_start=").append(System.nanoTime()).append(",");
         evictorContext.evictAfter(recordsWithTimestamp, (int) (this.allowedLateness / 1000));
         //TODO: SB Evict End
-        latency.append(System.nanoTime());
+        fields.append("evict_end=").append(System.nanoTime()).append(",");
         //Emit to the side output stream
-        this.output.collect(latencyStream, new StreamRecord<String>(latency.toString()));
-        this.output.collect(stateSizeStream, new StreamRecord<String>(stateSize.toString()));
+
+        long count = 0;
+        for (Object obj : contents) {
+            count++;
+        }
+        //TODO state size
+        fields.append("sate_size_items=").append(count);
+
+        tags.append(" ").append(fields).append(" ").append(System.nanoTime());
+        this.output.collect(outputTag, new StreamRecord<>(tags.toString()));
+
     }
 
     /**
@@ -215,6 +220,11 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
     @Override
     public void onEventTime(InternalTimer<K, W> timer) throws Exception {
 
+        fields = new StringBuilder();
+        tags = new StringBuilder();
+
+        tags.append("method=onEventTime");
+
         triggerContext.key = timer.getKey();
         triggerContext.window = timer.getNamespace();
         evictorContext.key = timer.getKey();
@@ -239,25 +249,31 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
 
         TriggerResult triggerResult = triggerContext.onEventTime(timer.getTimestamp());
 
+        fields.append("emit_start=").append(System.nanoTime()).append(",");
         if (triggerResult.isFire()) {
             Iterable<StreamRecord<IN>> contents = evictingWindowState.get();
             if (contents != null) {
                 emitWindowContents(triggerContext.window, null, evictingWindowState);
             }
         }
+        fields.append("emit_start=").append(System.nanoTime()).append(",");
 
         if (triggerResult.isPurge()) {
             evictingWindowState.clear();
         }
-
+        fields.append("evict_start=").append(System.nanoTime()).append(",");
         if (windowAssigner.isEventTime() && isCleanupTime(triggerContext.window, timer.getTimestamp())) {
             clearAllState(triggerContext.window, evictingWindowState, mergingWindows);
         }
+        fields.append("evict_end=").append(System.nanoTime());
 
         if (mergingWindows != null) {
             // need to make sure to update the merging state in state
             mergingWindows.persist();
         }
+
+        tags.append(" ").append(fields).append(" ").append(System.nanoTime());
+        this.output.collect(outputTag, new StreamRecord<>(tags.toString()));
     }
 
     @Override

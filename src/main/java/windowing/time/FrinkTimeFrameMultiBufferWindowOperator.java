@@ -78,7 +78,7 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  * @param <W>   The type of {@code Window} that the {@code WindowAssigner} assigns.
  */
 @Internal
-public class FrinkTimeBasedMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Window>
+public class FrinkTimeFrameMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Window>
         extends AbstractUdfStreamOperator<OUT, InternalWindowFunction<ACC, OUT, K, W>>
         implements OneInputStreamOperator<IN, OUT>, Triggerable<K, W> {
 
@@ -129,11 +129,8 @@ public class FrinkTimeBasedMultiBufferWindowOperator<K, IN, ACC, OUT, W extends 
     protected transient Counter numLateRecordsDropped;
 
 
-    protected StringBuilder tags;
-    protected StringBuilder fields;
-
-    final OutputTag<String> outputTag = new OutputTag<String>("latency") {
-    };
+    StringBuilder sb = new StringBuilder();
+    final OutputTag<String> outputTag = new OutputTag<String>("latency") {};
 
     // ------------------------------------------------------------------------
     // State that is not checkpointed
@@ -179,7 +176,7 @@ public class FrinkTimeBasedMultiBufferWindowOperator<K, IN, ACC, OUT, W extends 
     /**
      * Creates a new {@code WindowOperator} based on the given policies and user functions.
      */
-    public FrinkTimeBasedMultiBufferWindowOperator(
+    public FrinkTimeFrameMultiBufferWindowOperator(
             WindowAssigner<? super IN, W> windowAssigner,
             TypeSerializer<W> windowSerializer,
             KeySelector<IN, K> keySelector,
@@ -299,61 +296,144 @@ public class FrinkTimeBasedMultiBufferWindowOperator<K, IN, ACC, OUT, W extends 
     @Override
     public void processElement(StreamRecord<IN> element) throws Exception {
 
-        //TODO: MB find find Start
-        fields = new StringBuilder();
-        tags = new StringBuilder();
-
-        tags.append("method=processElement");
-        fields.append("find_start=").append(System.nanoTime()).append(",");
+        //TODO: MB SCOPE find Start
+        sb = new StringBuilder();
+        sb.append(System.nanoTime()).append(",");
 
         final Collection<W> elementWindows = windowAssigner.assignWindows(
                 element.getValue(), element.getTimestamp(), windowAssignerContext);
-        //TODO: MB find find end
-        fields.append("find_end=").append(System.nanoTime()).append(",");
+        //TODO: MB SCOPE find end
+        sb.append(System.nanoTime()).append(",");
 
         //if element is handled by none of assigned elementWindows
         boolean isSkippedElement = true;
 
         final K key = this.<K>getKeyedStateBackend().getCurrentKey();
 
-        //TODO add start
-        int cumulativeAddLatency = 0;
-        for (W window : elementWindows) {
 
-            // drop if the window is already late
-            if (isWindowLate(window)) {
-                continue;
-            }
-            isSkippedElement = false;
+        if (windowAssigner instanceof MergingWindowAssigner) {
 
-            //TODO add to the current window
-            long add_start_1 = System.nanoTime();
-            windowState.setCurrentNamespace(window);
-            windowState.add(element.getValue());
+            MergingWindowSet<W> mergingWindows = getMergingWindowSet();
+            for (W window : elementWindows) {
 
-            cumulativeAddLatency += System.nanoTime() - add_start_1;
+                // adding the new window might result in a merge, in that case the actualWindow
+                // is the merged window and we work with that. If we don't merge then
+                // actualWindow == window
+                W actualWindow = mergingWindows.addWindow(window, new MergingWindowSet.MergeFunction<W>() {
+                    @Override
+                    public void merge(W mergeResult,
+                                      Collection<W> mergedWindows, W stateWindowResult,
+                                      Collection<W> mergedStateWindows) throws Exception {
 
-            triggerContext.key = key;
-            triggerContext.window = window;
+                        if ((windowAssigner.isEventTime() && mergeResult.maxTimestamp() + allowedLateness <= internalTimerService.currentWatermark())) {
+                            throw new UnsupportedOperationException("The end timestamp of an " +
+                                                                    "event-time window cannot become earlier than the current watermark " +
+                                                                    "by merging. Current watermark: " + internalTimerService.currentWatermark() +
+                                                                    " window: " + mergeResult);
+                        } else if (!windowAssigner.isEventTime() && mergeResult.maxTimestamp() <= internalTimerService.currentProcessingTime()) {
+                            throw new UnsupportedOperationException("The end timestamp of a " +
+                                                                    "processing-time window cannot become earlier than the current processing time " +
+                                                                    "by merging. Current processing time: " + internalTimerService.currentProcessingTime() +
+                                                                    " window: " + mergeResult);
+                        }
 
-            TriggerResult triggerResult = triggerContext.onElement(element);
+                        triggerContext.key = key;
+                        triggerContext.window = mergeResult;
 
-            if (triggerResult.isFire()) {
-                ACC contents = windowState.get();
-                if (contents == null) {
+                        triggerContext.onMerge(mergedWindows);
+
+                        for (W m : mergedWindows) {
+                            triggerContext.window = m;
+                            triggerContext.clear();
+                            deleteCleanupTimer(m);
+                        }
+
+                        // merge the merged state windows into the newly resulting state window
+                        windowMergingState.mergeNamespaces(stateWindowResult, mergedStateWindows);
+                    }
+                });
+
+                // drop if the window is already late
+                if (isWindowLate(actualWindow)) {
+                    mergingWindows.retireWindow(actualWindow);
                     continue;
                 }
-                emitWindowContents(window, contents);
+                isSkippedElement = false;
+
+                W stateWindow = mergingWindows.getStateWindow(actualWindow);
+                if (stateWindow == null) {
+                    throw new IllegalStateException("Window " + window + " is not in in-flight window set.");
+                }
+
+                windowState.setCurrentNamespace(stateWindow);
+                windowState.add(element.getValue());
+
+                triggerContext.key = key;
+                triggerContext.window = actualWindow;
+
+                TriggerResult triggerResult = triggerContext.onElement(element);
+
+                if (triggerResult.isFire()) {
+                    ACC contents = windowState.get();
+                    if (contents == null) {
+                        continue;
+                    }
+                    emitWindowContents(actualWindow, contents);
+                }
+
+                if (triggerResult.isPurge()) {
+                    windowState.clear();
+                }
+                registerCleanupTimer(actualWindow);
             }
 
-            if (triggerResult.isPurge()) {
-                windowState.clear();
+            // need to make sure to update the merging state in state
+            mergingWindows.persist();
+        } else {
+
+            stateSizeItems = 0;
+            stateSizeWindows = 0;
+
+
+            //TODO add start
+            int cumulativeAddLatency = 0;
+            for (W window : elementWindows) {
+
+                // drop if the window is already late
+                if (isWindowLate(window)) {
+                    continue;
+                }
+                isSkippedElement = false;
+
+                //TODO add to the current window
+                long add_start_1 = System.nanoTime();
+                windowState.setCurrentNamespace(window);
+                windowState.add(element.getValue());
+
+                cumulativeAddLatency +=  System.nanoTime() - add_start_1;
+
+                triggerContext.key = key;
+                triggerContext.window = window;
+
+                TriggerResult triggerResult = triggerContext.onElement(element);
+
+                if (triggerResult.isFire()) {
+                    ACC contents = windowState.get();
+                    if (contents == null) {
+                        continue;
+                    }
+                    emitWindowContents(window, contents);
+                }
+
+                if (triggerResult.isPurge()) {
+                    windowState.clear();
+                }
+                registerCleanupTimer(window);
             }
-            registerCleanupTimer(window);
+
+            //TODO: MB add End
+            sb.append(cumulativeAddLatency).append(",");
         }
-
-        //TODO: MB add End
-        fields.append("cumulative_add_latency=").append(cumulativeAddLatency).append(",");
 
 
         // side output input event if
@@ -368,15 +448,12 @@ public class FrinkTimeBasedMultiBufferWindowOperator<K, IN, ACC, OUT, W extends 
             }
         }
 
-        //TODO log state size
-        logStatesize(element.getTimestamp());
-
-        tags.append(" ").append(fields);
-        this.output.collect(outputTag, new StreamRecord<>(tags.toString()));
+        logStatesize(element.getTimestamp(), sb);
+        this.output.collect(outputTag, new StreamRecord<>(sb.toString()));
 
     }
 
-    private void logStatesize(long timestamp) {
+    private void logStatesize(long timestamp, StringBuilder sb) {
         FrinkSlidingEventTimeWindows<TimeWindow> wa = (FrinkSlidingEventTimeWindows<TimeWindow>) windowAssigner;
         long size = wa.getSize();
         long slide = wa.getSlide();
@@ -393,20 +470,14 @@ public class FrinkTimeBasedMultiBufferWindowOperator<K, IN, ACC, OUT, W extends 
                 totalSize += acc.size();
                 windowCount++;
             } catch (Exception ex) {
-//                System.out.println("window don't exist [ " + start + "," + (start + size) + " ] ");
+                System.out.println("window don't exist [ " + start + "," + (start + size) + " ] ");
             }
         }
-        fields.append("state_size_items=").append(totalSize).append(',').append("state_size_windows=").append(windowCount).append(',');
+        sb.append(totalSize).append(',').append(windowCount).append(',');
     }
 
     @Override
     public void onEventTime(InternalTimer<K, W> timer) throws Exception {
-
-        fields = new StringBuilder();
-        tags = new StringBuilder();
-
-        tags.append("method=onEventTime");
-
         triggerContext.key = timer.getKey();
         triggerContext.window = timer.getNamespace();
 
@@ -428,33 +499,22 @@ public class FrinkTimeBasedMultiBufferWindowOperator<K, IN, ACC, OUT, W extends 
             mergingWindows = null;
         }
 
-        fields.append("emit_start=").append(System.nanoTime()).append(',');
         TriggerResult triggerResult = triggerContext.onEventTime(timer.getTimestamp());
 
-        //TODO emit
         if (triggerResult.isFire()) {
             ACC contents = windowState.get();
             if (contents != null) {
                 emitWindowContents(triggerContext.window, contents);
             }
         }
-        fields.append("emit_end=").append(System.nanoTime()).append(',');
 
         if (triggerResult.isPurge()) {
             windowState.clear();
         }
 
-        //TODO: EVICT Start (2nd Part)
-        fields.append("evict_start_2=").append(System.nanoTime()).append(",");;
         if (windowAssigner.isEventTime() && isCleanupTime(triggerContext.window, timer.getTimestamp())) {
             clearAllState(triggerContext.window, windowState, mergingWindows);
         }
-
-        //TODO: EVICT End (2nd Part)
-        fields.append("evict_end_2=").append(System.nanoTime());
-
-        tags.append(" ").append(fields).append(" ").append(System.nanoTime());
-        this.output.collect(outputTag, new StreamRecord<>(tags.toString()));
 
         if (mergingWindows != null) {
             // need to make sure to update the merging state in state
@@ -760,7 +820,7 @@ public class FrinkTimeBasedMultiBufferWindowOperator<K, IN, ACC, OUT, W extends 
 
         @Override
         public KeyedStateStore globalState() {
-            return FrinkTimeBasedMultiBufferWindowOperator.this.getKeyedStateStore();
+            return FrinkTimeFrameMultiBufferWindowOperator.this.getKeyedStateStore();
         }
 
         @Override
@@ -790,7 +850,7 @@ public class FrinkTimeBasedMultiBufferWindowOperator<K, IN, ACC, OUT, W extends 
 
         @Override
         public MetricGroup getMetricGroup() {
-            return FrinkTimeBasedMultiBufferWindowOperator.this.getMetricGroup();
+            return FrinkTimeFrameMultiBufferWindowOperator.this.getMetricGroup();
         }
 
         public long getCurrentWatermark() {
@@ -830,7 +890,7 @@ public class FrinkTimeBasedMultiBufferWindowOperator<K, IN, ACC, OUT, W extends 
         @SuppressWarnings("unchecked")
         public <S extends State> S getPartitionedState(StateDescriptor<S, ?> stateDescriptor) {
             try {
-                return FrinkTimeBasedMultiBufferWindowOperator.this.getPartitionedState(window, windowSerializer, stateDescriptor);
+                return FrinkTimeFrameMultiBufferWindowOperator.this.getPartitionedState(window, windowSerializer, stateDescriptor);
             } catch (Exception e) {
                 throw new RuntimeException("Could not retrieve state", e);
             }

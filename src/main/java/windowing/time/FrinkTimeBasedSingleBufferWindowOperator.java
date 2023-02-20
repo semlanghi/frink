@@ -151,7 +151,7 @@ public class FrinkTimeBasedSingleBufferWindowOperator<K, IN, OUT, W extends Wind
                 count++;
             }
 
-            SortedMap<TimeWindow, ? extends Iterable<StreamRecord<IN>>> win2Fire = extractData(contents, complexTriggerResult.resultWindows);
+            SortedMap<TimeWindow, ? extends Iterable<StreamRecord<IN>>> win2Fire = find(contents, complexTriggerResult.resultWindows);
 
 
             if (complexTriggerResult.internalResult.isFire()) {
@@ -195,7 +195,7 @@ public class FrinkTimeBasedSingleBufferWindowOperator<K, IN, OUT, W extends Wind
 
     }
 
-    private SortedMap<TimeWindow, ? extends Iterable<StreamRecord<IN>>> extractData(Iterable<StreamRecord<IN>> resultCollection, Collection<TimeWindow> resultWindows) {
+    private SortedMap<TimeWindow, ? extends Iterable<StreamRecord<IN>>> find(Iterable<StreamRecord<IN>> resultCollection, Collection<TimeWindow> resultWindows) {
 
         SortedMap<TimeWindow, List<StreamRecord<IN>>> internalWindows = new TreeMap<>(Comparator.comparingLong(TimeWindow::getEnd));
         resultCollection.forEach(item -> resultWindows.stream()
@@ -242,7 +242,7 @@ public class FrinkTimeBasedSingleBufferWindowOperator<K, IN, OUT, W extends Wind
         if (contents == null)
             return;
 
-        SortedMap<TimeWindow, ? extends Iterable<StreamRecord<IN>>> win2Fire = extractData(contents, complexTriggerResult.resultWindows);
+        SortedMap<TimeWindow, ? extends Iterable<StreamRecord<IN>>> win2Fire = find(contents, complexTriggerResult.resultWindows);
 
         if (complexTriggerResult.internalResult.isFire()) {
             for (TimeWindow w : complexTriggerResult.resultWindows) {
