@@ -142,8 +142,9 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
         evictorContext.key = key;
         evictorContext.window = window;
 
+
         ComplexTriggerResult<DataDrivenWindow> complexTriggerResult = this.frameTrigger.onWindow(element.getValue(), element.getTimestamp(), triggerContext);
-        fields.append(complexTriggerResult.latencyInfo).append("report_end=").append(System.nanoTime()).append(",");
+        fields.append(complexTriggerResult.latencyInfo);
 
         //TODO: SB EMIT Start
         fields.append("content_start=").append(System.nanoTime()).append(",");
@@ -154,35 +155,28 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
             return;
         }
 
-        // Work around type system restrictions...
-        FluentIterable<TimestampedValue<IN>> recordsWithTimestamp = FluentIterable
-                .from(contents)
-                .transform(input -> TimestampedValue.from(input));
-
-        SortedMap<DataDrivenWindow, ? extends Iterable<TimestampedValue<IN>>> iterables =
-                extractData(recordsWithTimestamp, complexTriggerResult.resultWindows);
-
+        SortedMap<DataDrivenWindow, ? extends Iterable<StreamRecord<IN>>> win2fire =
+                find(contents, complexTriggerResult.resultWindows);
         //TODO: SB Content End
         fields.append("content_end=").append(System.nanoTime()).append(",");
         //Ahmed: Will do the iteration to compute the state here to avoid affecting the latency of content delivery
 
         // The eviction before the emission of the output is not necessary
+
+        //TODO: SB Emit start
+        fields.append("emit_start=").append(System.nanoTime()).append(",");
         if (complexTriggerResult.internalResult.isFire()) {
             for (DataDrivenWindow tmp : complexTriggerResult.resultWindows) {
-                if (iterables.containsKey(tmp))
-                    emitWindowContents(window, iterables.get(tmp), evictingWindowState);
+                if (win2fire.containsKey(tmp))
+                    emitWindowContents(window, win2fire.get(tmp), evictingWindowState);
             }
         }
+        //TODO: SB Emit End
+        fields.append("emit_end=").append(System.nanoTime()).append(",");
 
         // The evictor should take the collections of events, but also the size of the collection
         // this is not usefult for a time-based eviction. Thus, we pass instead of the size, the allowed lateness
 
-        //TODO: SB Evict Start
-        fields.append("evict_start=").append(System.nanoTime()).append(",");
-        evictorContext.evictAfter(recordsWithTimestamp, (int) (this.allowedLateness / 1000));
-        //TODO: SB Evict End
-        fields.append("evict_end=").append(System.nanoTime()).append(",");
-        //Emit to the side output stream
 
         long count = 0;
         for (Object obj : contents) {
@@ -203,9 +197,9 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
      * @param resultWindows
      * @return a map object containing the windows mapped to the related set of events
      */
-    private SortedMap<DataDrivenWindow, ? extends Iterable<TimestampedValue<IN>>> extractData(Iterable<TimestampedValue<IN>> resultCollection, Collection<DataDrivenWindow> resultWindows) {
+    private SortedMap<DataDrivenWindow, ? extends Iterable<StreamRecord<IN>>> find(Iterable<StreamRecord<IN>> resultCollection, Collection<DataDrivenWindow> resultWindows) {
 
-        SortedMap<DataDrivenWindow, List<TimestampedValue<IN>>> internalWindows = new TreeMap<>(Comparator.comparingLong(DataDrivenWindow::getEnd));
+        SortedMap<DataDrivenWindow, List<StreamRecord<IN>>> internalWindows = new TreeMap<>(Comparator.comparingLong(DataDrivenWindow::getEnd));
         resultCollection.forEach(inTimestampedValue -> resultWindows.stream()
                 .filter(window -> window.getStart() <= inTimestampedValue.getTimestamp() && window.getEnd() > inTimestampedValue.getTimestamp())
                 .findFirst()
@@ -254,18 +248,18 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
             Iterable<StreamRecord<IN>> contents = evictingWindowState.get();
             if (contents != null) {
                 emitWindowContents(triggerContext.window, null, evictingWindowState);
+                //emit ends inside
             }
         }
-        fields.append("emit_start=").append(System.nanoTime()).append(",");
 
         if (triggerResult.isPurge()) {
             evictingWindowState.clear();
         }
-        fields.append("evict_start=").append(System.nanoTime()).append(",");
+        fields.append("evict_start_2=").append(System.nanoTime()).append(",");
         if (windowAssigner.isEventTime() && isCleanupTime(triggerContext.window, timer.getTimestamp())) {
             clearAllState(triggerContext.window, evictingWindowState, mergingWindows);
         }
-        fields.append("evict_end=").append(System.nanoTime());
+        fields.append("evict_end_2=").append(System.nanoTime());
 
         if (mergingWindows != null) {
             // need to make sure to update the merging state in state
@@ -323,11 +317,19 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
         }
     }
 
-    private void emitWindowContents(W window, Iterable<TimestampedValue<IN>> contents, ListState<StreamRecord<IN>> windowState) throws Exception {
+    private void emitWindowContents(W window, Iterable<StreamRecord<IN>> contents, ListState<StreamRecord<IN>> windowState) throws Exception {
 
-        FluentIterable<TimestampedValue<IN>> fluentIterable = FluentIterable.from(contents);
+        // Work around type system restrictions...
+        FluentIterable<TimestampedValue<IN>> recordsWithTimestamp = FluentIterable
+                .from(contents)
+                .transform(new Function<StreamRecord<IN>, TimestampedValue<IN>>() {
+                    @Override
+                    public TimestampedValue<IN> apply(StreamRecord<IN> input) {
+                        return TimestampedValue.from(input);
+                    }
+                });
 
-        FluentIterable<IN> projectedContents = fluentIterable
+        FluentIterable<IN> projectedContents = recordsWithTimestamp
                 .transform(new Function<TimestampedValue<IN>, IN>() {
                     @Override
                     public IN apply(TimestampedValue<IN> input) {
@@ -337,6 +339,14 @@ public class StateAwareSingleBufferWindowOperator<K, IN, OUT, W extends Window>
 
         processContext.window = triggerContext.window;
         userFunction.process(triggerContext.key, triggerContext.window, processContext, projectedContents, timestampedCollector);
+
+        //TODO: SB Evict Start
+        fields.append("evict_start_1=").append(System.nanoTime()).append(",");
+        evictorContext.evictAfter(recordsWithTimestamp, (int) (this.allowedLateness / 1000));
+        //TODO: SB Evict End
+        fields.append("evict_end_1=").append(System.nanoTime()).append(",");
+        //Emit to the side output stream
+
     }
 
     private void clearAllState(

@@ -109,8 +109,17 @@ public class FrinkTimeBasedSingleBufferWindowOperator<K, IN, OUT, W extends Wind
 
     @Override
     public void processElement(StreamRecord<IN> element) throws Exception {
+
+        tags = new StringBuilder();
+        tags.append("method=processElement");
+
+        fields = new StringBuilder();
+        //TODO: MB find Start
+
+        fields.append("find_start_1=").append(System.nanoTime()).append(",");
         final Collection<W> elementWindows = windowAssigner.assignWindows(
                 element.getValue(), element.getTimestamp(), windowAssignerContext);
+        fields.append("find_end_1=").append(System.nanoTime()).append(",");
 
         //if element is handled by none of assigned elementWindows
         boolean isSkippedElement = true;
@@ -118,67 +127,77 @@ public class FrinkTimeBasedSingleBufferWindowOperator<K, IN, OUT, W extends Wind
         final K key = this.<K>getKeyedStateBackend().getCurrentKey();
 
         if (element.getTimestamp() + allowedLateness <= internalTimerService.currentWatermark()) {
-            System.out.println(element);
             return;
         }
 
-        for (W window : elementWindows) {
+        W window = elementWindows.iterator().next();
 
-            // check if the window is already inactive
-            if (isWindowLate(window)) {
-                continue;
-            }
-            isSkippedElement = false;
+        // check if the window is already inactive
+        if (isWindowLate(window)) {
+            return;
+        }
 
-            evictingWindowState.setCurrentNamespace(window);
-            evictingWindowState.add(element);
+        isSkippedElement = false;
 
-            triggerContext.key = key;
-            triggerContext.window = window;
-            evictorContext.key = key;
-            evictorContext.window = window;
+        fields.append("add_start=").append(System.nanoTime()).append(",");
+        evictingWindowState.setCurrentNamespace(window);
+        evictingWindowState.add(element);
+        fields.append("add_end=").append(System.nanoTime()).append(",");
+
+        triggerContext.key = key;
+        triggerContext.window = window;
+        evictorContext.key = key;
+        evictorContext.window = window;
 
 //            TriggerResult triggerResult = triggerContext.onElement(element);
-            ComplexTriggerResult<TimeWindow> complexTriggerResult = this.singleBufferTrigger.onWindow(element.getValue(), element.getTimestamp(), triggerContext, windowAssignerContext);
-            Iterable<StreamRecord<IN>> contents = evictingWindowState.get();
+        ComplexTriggerResult<TimeWindow> tr = this.singleBufferTrigger.onWindow(element.getValue(), element.getTimestamp(), triggerContext, windowAssignerContext);
+        fields.append(tr.latencyInfo);
 
-            if (contents == null) {
-                continue;
-            }
+        //TODO: SB EMIT Start
+        fields.append("content_start=").append(System.nanoTime()).append(",");
 
-            long count = 0;
-            for (Object obj : contents) {
-                count++;
-            }
-
-            SortedMap<TimeWindow, ? extends Iterable<StreamRecord<IN>>> win2Fire = find(contents, complexTriggerResult.resultWindows);
-
-
-            if (complexTriggerResult.internalResult.isFire()) {
-                for (TimeWindow w : complexTriggerResult.resultWindows) {
-                    if (win2Fire.containsKey(w))
-                        emitWindowContents(window, win2Fire.get(w), evictingWindowState);
-                }
-                //actually a single window
-            }
-
-            if (complexTriggerResult.internalResult.isPurge()) {
-                evictingWindowState.clear();
-            }
-
-            FluentIterable<TimestampedValue<IN>> recordsWithTimestamp = FluentIterable
-                    .from(contents)
-                    .transform(new Function<StreamRecord<IN>, TimestampedValue<IN>>() {
-                        @Override
-                        public TimestampedValue<IN> apply(StreamRecord<IN> input) {
-                            return TimestampedValue.from(input);
-                        }
-                    });
-
-            evictorContext.evictAfter(recordsWithTimestamp, (int) (this.allowedLateness / 1000));
-
-            registerCleanupTimer(window);
+        Iterable<StreamRecord<IN>> contents = evictingWindowState.get();
+        if (contents == null) {
+            return;
         }
+
+        SortedMap<TimeWindow, ? extends Iterable<StreamRecord<IN>>> win2Fire = find(contents, tr.resultWindows);
+        //TODO: SB Content End
+        fields.append("content_end=").append(System.nanoTime()).append(",");
+
+        //TODO: SB Emit start
+        fields.append("emit_start=").append(System.nanoTime()).append(",");
+
+        if (tr.internalResult.isFire()) {
+            for (TimeWindow w : tr.resultWindows) {
+                if (win2Fire.containsKey(w))
+                    emitWindowContents(window, win2Fire.get(w), evictingWindowState);
+            }
+            //actually a single window
+        }
+        //TODO: SB Emit End
+        fields.append("emit_end=").append(System.nanoTime()).append(",");
+
+        if (tr.internalResult.isPurge()) {
+            evictingWindowState.clear();
+        }
+
+        //TODO: SB Evict Start
+        fields.append("evict_start=").append(System.nanoTime()).append(",");
+        FluentIterable<TimestampedValue<IN>> recordsWithTimestamp = FluentIterable
+                .from(contents)
+                .transform(new Function<StreamRecord<IN>, TimestampedValue<IN>>() {
+                    @Override
+                    public TimestampedValue<IN> apply(StreamRecord<IN> input) {
+                        return TimestampedValue.from(input);
+                    }
+                });
+
+        evictorContext.evictAfter(recordsWithTimestamp, (int) (this.allowedLateness / 1000));
+        //TODO: SB Evict End
+        fields.append("evict_end=").append(System.nanoTime()).append(",");
+
+        registerCleanupTimer(window);
 
 
         // side output input event if
@@ -192,6 +211,18 @@ public class FrinkTimeBasedSingleBufferWindowOperator<K, IN, OUT, W extends Wind
                 this.numLateRecordsDropped.inc();
             }
         }
+
+        long count = 0;
+        for (Object obj : contents) {
+            count++;
+        }
+
+        //TODO state size
+        fields.append("sate_size_items=").append(count);
+        //todo can we log the min and max timestamp at the time.
+
+        tags.append(" ").append(fields).append(" ").append(System.nanoTime());
+        this.output.collect(outputTag, new StreamRecord<>(tags.toString()));
 
     }
 
@@ -211,6 +242,10 @@ public class FrinkTimeBasedSingleBufferWindowOperator<K, IN, OUT, W extends Wind
     @Override
     public void onEventTime(InternalTimer<K, W> timer) throws Exception {
 
+        fields = new StringBuilder();
+        tags = new StringBuilder();
+
+        tags.append("method=onEventTime");
         triggerContext.key = timer.getKey();
         triggerContext.window = timer.getNamespace();
         evictorContext.key = timer.getKey();
@@ -234,40 +269,48 @@ public class FrinkTimeBasedSingleBufferWindowOperator<K, IN, OUT, W extends Wind
         }
 
 
-        ComplexTriggerResult<TimeWindow> complexTriggerResult = singleBufferTrigger.onEventTime(timer.getTimestamp());
-//        this.singleBufferTrigger.onWindow(null, timer.getTimestamp(), triggerContext, windowAssignerContext);
+        ComplexTriggerResult<TimeWindow> crt = singleBufferTrigger.onEventTime(timer.getTimestamp());
+        fields.append(crt.latencyInfo);
 
+        fields.append("content_start=").append(System.nanoTime()).append(",");
         Iterable<StreamRecord<IN>> contents = evictingWindowState.get();
 
         if (contents == null)
             return;
 
-        SortedMap<TimeWindow, ? extends Iterable<StreamRecord<IN>>> win2Fire = find(contents, complexTriggerResult.resultWindows);
+        SortedMap<TimeWindow, ? extends Iterable<StreamRecord<IN>>> win2Fire = find(contents, crt.resultWindows);
+        fields.append("content_end=").append(System.nanoTime()).append(",");
 
-        if (complexTriggerResult.internalResult.isFire()) {
-            for (TimeWindow w : complexTriggerResult.resultWindows) {
+        fields.append("emit_start=").append(System.nanoTime()).append(",");
+        if (crt.internalResult.isFire()) {
+            for (TimeWindow w : crt.resultWindows) {
                 //actually a single window
 
                 if (win2Fire.containsKey(w))
                     emitWindowContents(triggerContext.window, win2Fire.get(w), evictingWindowState);
             }
-
-
         }
 
-        if (complexTriggerResult.internalResult.isPurge()) {
+        fields.append("emit_end=").append(System.nanoTime()).append(",");
+
+        if (crt.internalResult.isPurge()) {
             evictingWindowState.clear();
         }
 
+        fields.append("evict_start_2=").append(System.nanoTime()).append(",");
         if (windowAssigner.isEventTime() && isCleanupTime(triggerContext.window, timer.getTimestamp())) {
             clearAllState(triggerContext.window, evictingWindowState, mergingWindows);
         }
+        fields.append("evict_end_2=").append(System.nanoTime());
 
         if (mergingWindows != null) {
             // need to make sure to update the merging state in state
             mergingWindows.persist();
         }
 
+
+        tags.append(" ").append(fields).append(" ").append(System.nanoTime());
+        this.output.collect(outputTag, new StreamRecord<>(tags.toString()));
 
     }
 
@@ -342,7 +385,13 @@ public class FrinkTimeBasedSingleBufferWindowOperator<K, IN, OUT, W extends Wind
 
         processContext.window = triggerContext.window;
         userFunction.process(triggerContext.key, triggerContext.window, processContext, projectedContents, timestampedCollector);
+        fields.append("emit_end=").append(System.nanoTime()).append(",");
+
+        //TODO: SB Evict Start
+        fields.append("evict_start_1=").append(System.nanoTime()).append(",");
         evictorContext.evictAfter(recordsWithTimestamp, Iterables.size(recordsWithTimestamp));
+        //TODO: SB Evict End
+        fields.append("evict_end_1=").append(System.nanoTime()).append(",");
 
         //work around to fix FLINK-4369, remove the evicted elements from the windowState.
         //this is inefficient, but there is no other way to remove elements from ListState, which is an AppendingState.

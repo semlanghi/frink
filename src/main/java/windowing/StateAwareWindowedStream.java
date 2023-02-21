@@ -125,7 +125,6 @@ public class StateAwareWindowedStream<T, K, W extends Window> extends WindowedSt
                 new ListStateDescriptor<>("window-contents", streamRecordSerializer);
 
         if (this.isFrame()) {
-
             if (visibleEvictor != null) {
                 operator =
                         new StateAwareSingleBufferWindowOperator<>(visibleWindowAssigner,
@@ -152,11 +151,11 @@ public class StateAwareWindowedStream<T, K, W extends Window> extends WindowedSt
                                 visibleLateDataOutputTag);
             }
 
-        } else {
+        } else { //Time Based Windowing
             if (visibleEvictor != null) {
 
                 operator =
-                        new StateAwareSingleBufferWindowOperator<>(visibleWindowAssigner,
+                        new FrinkTimeBasedSingleBufferWindowOperator<>(visibleWindowAssigner,
                                 visibleWindowAssigner.getWindowSerializer(getExecutionEnvironment().getConfig()),
                                 keySel,
                                 visibleInput.getKeyType().createSerializer(getExecutionEnvironment().getConfig()),

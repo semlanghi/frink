@@ -54,7 +54,9 @@ public class CustomTrigger<I, W extends TimeWindow> extends Trigger<I, GlobalWin
     }
 
     public ComplexTriggerResult<W> onEventTime(long time) {
-        StringBuilder sb = new StringBuilder();
+        StringBuilder fields = new StringBuilder();
+        //TODO: SB Scope Start
+        fields.append("find_start_2=").append(System.nanoTime()).append(",");
 
         Collection<W> ws = wa.assignWindows(null, time, null);
 
@@ -62,11 +64,13 @@ public class CustomTrigger<I, W extends TimeWindow> extends Trigger<I, GlobalWin
                 filter(w -> w.maxTimestamp() == time)
                 .collect(Collectors.toList());
 
+        fields.append("find_end_2=").append(System.nanoTime()).append(",");
+
         if (toFire.isEmpty()) {
-            return new ComplexTriggerResult<>(TriggerResult.CONTINUE, toFire, sb.toString());
+            return new ComplexTriggerResult<>(TriggerResult.CONTINUE, toFire, fields.toString());
         }
 //        tctx.registerEventTimeTimer(timestamp); //TODO not sure is necessary
-        return new ComplexTriggerResult<>(TriggerResult.FIRE, toFire, sb.toString());
+        return new ComplexTriggerResult<>(TriggerResult.FIRE, toFire, fields.toString());
     }
 
     @Override
@@ -76,9 +80,10 @@ public class CustomTrigger<I, W extends TimeWindow> extends Trigger<I, GlobalWin
 
     public ComplexTriggerResult<W> onWindow(I element, long timestamp, TriggerContext tctx, WindowAssigner.WindowAssignerContext wactx) {
 
-        StringBuilder sb = new StringBuilder();
+        StringBuilder fields = new StringBuilder();
 
-        sb.append(System.nanoTime()).append(",");
+        //TODO: SB Scope Start
+        fields.append("find_start_2=").append(System.nanoTime()).append(",");
 
         Collection<W> ws = wa.assignWindows(element, timestamp, wactx);
 
@@ -86,13 +91,14 @@ public class CustomTrigger<I, W extends TimeWindow> extends Trigger<I, GlobalWin
                 filter(w -> TriggerResult.FIRE.equals(onElement2(element, timestamp, w, tctx)))
                 .collect(Collectors.toList());
 
+        //TODO: SB Scope End
+        fields.append("find_end_2=").append(System.nanoTime()).append(",");
 
         if (toFire.isEmpty()) {
-            tctx.registerEventTimeTimer(timestamp); //TODO not sure is necessary
-            return new ComplexTriggerResult<>(TriggerResult.CONTINUE, toFire, sb.toString());
+            tctx.registerEventTimeTimer(timestamp);
+            return new ComplexTriggerResult<>(TriggerResult.CONTINUE, toFire, fields.toString());
         }
-//        tctx.registerEventTimeTimer(timestamp); //TODO not sure is necessary
-        return new ComplexTriggerResult<>(TriggerResult.FIRE, toFire, sb.toString());
+        return new ComplexTriggerResult<>(TriggerResult.FIRE, toFire, fields.toString());
     }
 }
 
