@@ -67,6 +67,7 @@ public class LinearRoadKafkaDataProducer {
             }
             count++;
 
+            //Used as Ending events
             for (int i = 0; i < 1; i++) {
                 actualTime+=1000;
                 line = "[-1, 0, 0.0, 0, 0, 0, 0, 0, "+actualTime+", "+(actualTime+1)+"]";

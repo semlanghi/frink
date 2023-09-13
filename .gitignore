@@ -33,4 +33,11 @@ data/
 target/
 kafka/
 
+*.out
+
+metrics-*
+output-*
+performance-*
+
+
 

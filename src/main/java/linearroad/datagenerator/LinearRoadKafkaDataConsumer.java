@@ -24,7 +24,7 @@ public class LinearRoadKafkaDataConsumer {
         KafkaConsumer<Integer, String> consumer = new KafkaConsumer<>(props);
 
         try {
-            consumer.subscribe(Collections.singletonList("linear-road-data"));
+            consumer.subscribe(Collections.singletonList("linear-road"));
 
             while (true) {
                 ConsumerRecords<Integer, String> records = consumer.poll(0L);

@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 export _JAVA_OPTIONS="-Xmx1g"
-export KAFKA_HOME="/Users/samuelelanghi/Documents/platforms/confluent-6.2.0"
 
-if [ -z "$KAFKA_HOME" ]
+if [ -z "$CONFLUENT_HOME" ]
 then
-      KAFKA_HOME="/root/platforms/confluent-5.3.1"
+      echo "Need to set environment variable CONFLUENT_HOME"
+      exit 1;
 else
-      echo "KAFKA_HOME is $KAFKA_HOME"
+      echo "CONFLUENT_HOME is $CONFLUENT_HOME"
 fi
 
 # stop zookeeper
 echo "Stopping zookeeper"
-$KAFKA_HOME/bin/zookeeper-server-stop $KAFKA_HOME/config/zookeeper.properties & sleep 5
+$CONFLUENT_HOME/bin/zookeeper-server-stop $CONFLUENT_HOME/config/zookeeper.properties
 
 #clean logs:
 echo "Cleaning zookeeper folders from /tmp"
