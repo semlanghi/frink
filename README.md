@@ -10,5 +10,32 @@ We cover all 4 cases of data-driven windows described in the paper:
 - Aggregate Windows, which aggregate data based on the satisfaction of a rolling aggregate condition
 
 
+## Guidelines
+
+1. Set Environment Variable CONFLUENT_HOME to your confluent directory
+2. Start zookeeper 
+3. Start kafka node
+4. Produce the data: start `./scripts/load_improved.sh` with params, some relevant are (check `./scripts/load_improved --help` for params explanations)
+   - kafka bootstrap server 
+   - topic name where to read data from
+   - path where linear road data set is, could be the full dataset
+   - maxevents to produce
+   - out of order configuration file path, if needed.
+5. Once `load_improved.sh` has finished, run the experiments with `./run.sh` (check again `./run.sh --help` for params explanations)
+
+
+
+Expanation of pipeline:
+
+1. Use input file and do preprocessing; i.e make the file format ready to feed to out of order generator;
+2. Update paths in input out of order config and use that as the final config
+3. Run our of order generator on input file
+4. Post process the file with out of order in dat format, ready to be fed to Flink Kafka Consumer and Kafka producer
+5. Create-Drop topic
+6. Publish max Events to kafka topic
+7. Start LinearRoadRunner for jobtype.
+
+
+
 
 
