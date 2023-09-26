@@ -37,7 +37,7 @@ public class SampleEventFileBuilder {
             writer.write(eventStr);
             writer.newLine();
 
-            if(numRecordsToEmit%1000000 == 0){
+            if(recordsEmitted%10000000 == 0){
                 System.out.println(eventStr);
                 writer.flush();
             }
