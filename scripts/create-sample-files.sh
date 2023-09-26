@@ -34,14 +34,6 @@ fi
 
 mkdir sampledata
 
-if [ -z "$CONFLUENT_HOME" ]
-then
-      echo "Need to set environment variable CONFLUENT_HOME"
-      exit 1;
-else
-      echo "CONFLUENT_HOME is $CONFLUENT_HOME"
-fi
-
 
 if [ ${input} == "" ]
 then

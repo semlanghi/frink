@@ -12,12 +12,12 @@ We cover all 4 cases of data-driven windows described in the paper:
 
 ## Guidelines - Synthetic Events Dataset
 
-3. Create the files: start `./scripts/create-sample-files.sh` with params, some relevant are (check `./scripts/create-sample-files.sh --help` for params explanations)
+1. Create the files: start `./scripts/create-sample-files.sh` with params, some relevant are (check `./scripts/create-sample-files.sh --help` for params explanations)
    - directory location where to place the dataset files
    - window parameters
    - maxevents to produce
    - out of order configuration file path, if needed.
-4. Once `create-sample-files.sh` has finished, run the experiments with `./run-sample.sh` (check again `./run-sample.sh --help` for parameters explanations)
+2. Once `create-sample-files.sh` has finished, run the experiments with `./run-sample.sh` (check again `./run-sample.sh --help` for parameters explanations)
 
 
 ## Guidelines - Kafka LinerRoad Pipeline
