@@ -1,11 +1,10 @@
 package linearroad;
 
-import event.RawEvent;
-import event.SpeedEvent;
+import linearroad.event.RawEvent;
+import linearroad.event.SpeedEvent;
 import linearroad.event.CustomStringSchema;
 import linearroad.event.FlinkKafkaCustomConsumer;
 import linearroad.mapper.SpeedMapper;
-import linearroad.source.LinearRoadSource;
 import org.apache.flink.api.common.functions.ReduceFunction;
 import org.apache.flink.api.common.io.ratelimiting.FlinkConnectorRateLimiter;
 import org.apache.flink.api.common.io.ratelimiting.GuavaFlinkConnectorRateLimiter;
@@ -19,10 +18,9 @@ import org.apache.flink.streaming.api.TimeCharacteristic;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.functions.AssignerWithPeriodicWatermarks;
 import org.apache.flink.streaming.api.functions.timestamps.AscendingTimestampExtractor;
 import org.apache.flink.streaming.api.functions.windowing.PassThroughWindowFunction;
-import org.apache.flink.streaming.api.watermark.Watermark;
+import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.util.OutputTag;
 import windowing.ExtendedKeyedStream;
 
@@ -36,6 +34,7 @@ import static org.apache.flink.streaming.connectors.kafka.FlinkKafkaConsumer09.K
 
 public class LinearRoadRunnerKafka {
 
+    private static final long ALLOWED_LATENESS = 5;
     static long windowLength = 1L;
 
     public static void main(String[] args) throws Exception {
@@ -110,15 +109,22 @@ public class LinearRoadRunnerKafka {
             SingleOutputStreamOperator<SpeedEvent> speedEventDataStreamSink;
 
             if (windowType.endsWith("threshold"))
-                speedEventDataStreamSink = extendedKeyedStream.frameThreshold(50, (ToLongFunction<SpeedEvent> & Serializable) value -> (long) value.getValue()).reduce((ReduceFunction<SpeedEvent>) (value1, value2) -> value1.getValue() > value2.getValue() ? value1 : value2, new PassThroughWindowFunction<>(), TypeInformation.of(SpeedEvent.class));
+                speedEventDataStreamSink = extendedKeyedStream
+                        .frameThreshold(50, (ToLongFunction<SpeedEvent> & Serializable) value -> (long) value.getValue())
+                        .allowedLateness(Time.seconds(ALLOWED_LATENESS))
+                        .reduce((ReduceFunction<SpeedEvent>) (value1, value2) -> value1.getValue() > value2.getValue() ? value1 : value2, new PassThroughWindowFunction<>(), TypeInformation.of(SpeedEvent.class));
             else if (windowType.endsWith("delta"))
-                speedEventDataStreamSink = extendedKeyedStream.frameDelta(50, (ToLongFunction<SpeedEvent> & Serializable) value -> (long) value.getValue()).reduce((ReduceFunction<SpeedEvent>) (value1, value2) -> value1.getValue() > value2.getValue() ? value1 : value2, new PassThroughWindowFunction<>(), TypeInformation.of(SpeedEvent.class));
+                speedEventDataStreamSink = extendedKeyedStream
+                        .frameDelta(50, (ToLongFunction<SpeedEvent> & Serializable) value -> (long) value.getValue())
+                        .allowedLateness(Time.seconds(ALLOWED_LATENESS))
+                        .reduce((ReduceFunction<SpeedEvent>) (value1, value2) -> value1.getValue() > value2.getValue() ? value1 : value2, new PassThroughWindowFunction<>(), TypeInformation.of(SpeedEvent.class));
             else if (windowType.endsWith("aggregate")) {
                 String[] params = winParams.split(";");
                 ReduceFunction<SpeedEvent> speedEventReduceFunction = (value1, value2) -> new SpeedEvent(value1.getKey(), Math.max(value1.getTimestamp(), value2.getTimestamp()), value1.getValue() + value2.getValue());
 
                 speedEventDataStreamSink = extendedKeyedStream
                         .frameAggregate((BiFunction<Long, Long, Long> & Serializable) Long::sum, Long.parseLong(params[1]), Long.parseLong(params[2]), (ToLongFunction<SpeedEvent> & Serializable) value -> (long) value.getValue())
+                        .allowedLateness(Time.seconds(ALLOWED_LATENESS))
 //                        .reduce((ReduceFunction<SpeedEvent>) (value1, value2) -> value1.getValue() > value2.getValue() ? value1 : value2, new PassThroughWindowFunction<>(), TypeInformation.of(SpeedEvent.class));
                         .reduce(speedEventReduceFunction, new PassThroughWindowFunction<>(), TypeInformation.of(SpeedEvent.class));
 

@@ -1,4 +1,4 @@
-package linearroad.datagenerator;
+package util;
 
 import com.opencsv.CSVWriter;
 

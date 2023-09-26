@@ -1,6 +1,4 @@
-package event;
-
-import event.RawEvent;
+package linearroad.event;
 
 public class AccelerationEvent extends RawEvent {
     public AccelerationEvent(){}

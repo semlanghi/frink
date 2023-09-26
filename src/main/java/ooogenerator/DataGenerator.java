@@ -1,8 +1,8 @@
-package linearroad.ooo;
+package ooogenerator;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import linearroad.ooo.configModel.DataGeneratorConfig;
+import ooogenerator.configModel.DataGeneratorConfig;
 
 import java.io.BufferedReader;
 import java.io.FileInputStream;

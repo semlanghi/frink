@@ -30,6 +30,7 @@ hs_err_pid*
 .idea/
 
 data/
+sampledata/
 target/
 kafka/
 

@@ -1,4 +1,4 @@
-package linearroad.ooo.configModel;
+package ooogenerator.configModel;
 
 /**
  * Created by philipp on 5/24/17.

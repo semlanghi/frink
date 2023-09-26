@@ -1,4 +1,4 @@
-package linearroad.ooo.configModel;
+package ooogenerator.configModel;
 
 import java.util.List;
 

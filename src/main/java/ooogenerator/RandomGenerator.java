@@ -1,4 +1,4 @@
-package linearroad.ooo;
+package ooogenerator;
 
 
 import java.util.Random;

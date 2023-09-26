@@ -1,4 +1,4 @@
-package linearroad.ooo;
+package ooogenerator;
 
 public class TimeUtil {
 

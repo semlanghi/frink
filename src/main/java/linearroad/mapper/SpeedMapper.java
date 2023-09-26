@@ -1,7 +1,7 @@
 package linearroad.mapper;
 
-import event.SpeedEvent;
-import linearroad.datagenerator.PerformanceFileBuilder;
+import linearroad.event.SpeedEvent;
+import util.PerformanceFileBuilder;
 import linearroad.event.ExperimentConfiguration;
 import org.apache.flink.api.common.functions.RichMapFunction;
 import org.apache.flink.configuration.Configuration;
@@ -58,7 +58,7 @@ public class SpeedMapper extends RichMapFunction<String, SpeedEvent> {
             registerCounter++;
             performanceFileBuilder.register(query, experimentId, startTime, currentTime, eventsCounter, implementation, parallelism);
         }
-        return new SpeedEvent("data[0].trim()", Long.parseLong(data[8].trim()), Double.parseDouble(data[1].trim()));
+        return new SpeedEvent(data[0].trim(), Long.parseLong(data[8].trim()), Double.parseDouble(data[1].trim()));
 
     }
 

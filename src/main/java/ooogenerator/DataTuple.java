@@ -1,4 +1,4 @@
-package linearroad.ooo;
+package ooogenerator;
 
 /**
  * Created by philipp on 5/24/17.

@@ -1,5 +1,7 @@
-import event.RawEvent;
-import event.SpeedEvent;
+package linearroad;
+
+import linearroad.event.RawEvent;
+import linearroad.event.SpeedEvent;
 import org.apache.flink.api.common.functions.ReduceFunction;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.configuration.Configuration;

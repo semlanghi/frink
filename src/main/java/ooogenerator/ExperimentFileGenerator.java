@@ -1,8 +1,8 @@
-package linearroad.ooo;
+package ooogenerator;
 
 
-import linearroad.ooo.configModel.DataGeneratorConfig;
-import linearroad.ooo.configModel.DataGeneratorExperimentConfig;
+import ooogenerator.configModel.DataGeneratorConfig;
+import ooogenerator.configModel.DataGeneratorExperimentConfig;
 
 import java.io.*;
 import java.nio.file.*;

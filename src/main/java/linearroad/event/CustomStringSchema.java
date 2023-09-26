@@ -24,7 +24,7 @@ public class CustomStringSchema extends KafkaDeserializationSchemaWrapper<String
 
     }
 
-    public CustomStringSchema(DeserializationSchema<String> deserializationSchema, long maxTimeMinutes) {
+    public  CustomStringSchema(DeserializationSchema<String> deserializationSchema, long maxTimeMinutes) {
         super(deserializationSchema);
         this.maxTime = maxTimeMinutes*60*1000;
         this.startTime = System.currentTimeMillis();

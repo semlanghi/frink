@@ -1,4 +1,4 @@
-package event;
+package linearroad.event;
 
 public class SpeedEvent extends RawEvent {
     public SpeedEvent(){}

@@ -358,6 +358,7 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
         boolean isSkippedElement = true;
         boolean ooo = false;
 
+
         final K key = this.<K>getKeyedStateBackend().getCurrentKey();
 
         if (windowAssigner instanceof MergingWindowAssigner) {

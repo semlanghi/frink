@@ -1,6 +1,6 @@
 package linearroad.mapper;
 
-import event.AccelerationEvent;
+import linearroad.event.AccelerationEvent;
 import org.apache.flink.api.common.functions.MapFunction;
 
 public class AccelerationMapper implements MapFunction<String, AccelerationEvent> {

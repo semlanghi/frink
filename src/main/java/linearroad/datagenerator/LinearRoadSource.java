@@ -1,6 +1,6 @@
-package linearroad.source;
+package linearroad.datagenerator;
 
-import event.SpeedEvent;
+import linearroad.event.SpeedEvent;
 import org.apache.flink.streaming.api.functions.source.SourceFunction;
 
 import java.io.BufferedReader;

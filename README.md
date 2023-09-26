@@ -10,7 +10,17 @@ We cover all 4 cases of data-driven windows described in the paper:
 - Aggregate Windows, which aggregate data based on the satisfaction of a rolling aggregate condition
 
 
-## Guidelines
+## Guidelines - Synthetic Events Dataset
+
+3. Create the files: start `./scripts/create-sample-files.sh` with params, some relevant are (check `./scripts/create-sample-files.sh --help` for params explanations)
+   - directory location where to place the dataset files
+   - window parameters
+   - maxevents to produce
+   - out of order configuration file path, if needed.
+4. Once `create-sample-files.sh` has finished, run the experiments with `./run-sample.sh` (check again `./run-sample.sh --help` for parameters explanations)
+
+
+## Guidelines - Kafka LinerRoad Pipeline
 
 1. Set Environment Variable CONFLUENT_HOME to your confluent directory
 2. Start zookeeper 

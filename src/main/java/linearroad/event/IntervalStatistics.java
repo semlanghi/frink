@@ -1,4 +1,4 @@
-package event;
+package linearroad.event;
 
 import java.io.Serializable;
 

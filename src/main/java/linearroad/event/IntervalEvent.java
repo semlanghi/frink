@@ -4,7 +4,7 @@
  * and open the template in the editor.
  */
 
-package event;
+package linearroad.event;
 
 
 import org.apache.flink.api.java.tuple.Tuple5;

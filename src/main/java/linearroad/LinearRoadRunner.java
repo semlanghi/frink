@@ -1,11 +1,11 @@
 package linearroad;
 
-import event.RawEvent;
-import event.SpeedEvent;
+import linearroad.event.RawEvent;
+import linearroad.event.SpeedEvent;
 import linearroad.event.CustomStringSchema;
 import linearroad.event.FlinkKafkaCustomConsumer;
 import linearroad.mapper.SpeedMapper;
-import linearroad.source.LinearRoadSource;
+import linearroad.datagenerator.LinearRoadSource;
 import org.apache.flink.api.common.functions.ReduceFunction;
 import org.apache.flink.api.common.io.ratelimiting.FlinkConnectorRateLimiter;
 import org.apache.flink.api.common.io.ratelimiting.GuavaFlinkConnectorRateLimiter;
@@ -17,7 +17,6 @@ import org.apache.flink.configuration.TaskManagerOptions;
 import org.apache.flink.core.fs.FileSystem;
 import org.apache.flink.streaming.api.TimeCharacteristic;
 import org.apache.flink.streaming.api.datastream.DataStream;
-import org.apache.flink.streaming.api.datastream.KeyedStream;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.AssignerWithPeriodicWatermarks;
