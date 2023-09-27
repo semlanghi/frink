@@ -20,7 +20,7 @@ public class DeltaDataGenerator implements DataGenerator {
         SampleEvent sampleEvent;
         if (count>=size){
             count=0;
-            this.val = this.val == 0 ? threshold * 10 : threshold * 5;
+            this.val = this.val == threshold * 5 ? threshold * 10 : threshold * 5;
             sampleEvent = new SampleEvent(0L, val, incrementalTs * 1000);
         } else {
             count++;
