@@ -54,7 +54,7 @@ public class DeltaWindowing<I> extends FrameWindowing<I> {
     protected boolean closePred(long element, FrameState mapState) throws Exception {
         if(mapState.getAuxiliaryValue()==0)
             return false;
-        return Math.abs(mapState.getAuxiliaryValue()-element) >= threshold;
+        return !updatePred(element,mapState);
     }
 
     @Override

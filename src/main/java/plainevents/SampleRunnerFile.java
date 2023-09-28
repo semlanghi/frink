@@ -97,19 +97,20 @@ public class SampleRunnerFile {
             SingleOutputStreamOperator<SampleEvent> sampleEventDataStreamSink;
 
             String[] params = windowParams.split(";");
+            ReduceFunction<SampleEvent> sampleEventReduceFunction = (value1, value2) -> new SampleEvent(value1.getKey(), value1.value() + value2.value(), Math.max(value1.timestamp(), value2.timestamp()));
             if (windowType.endsWith("threshold"))
                 sampleEventDataStreamSink = extendedKeyedStream
                         .frameThreshold(Long.parseLong(params[0]), (ToLongFunction<SampleEvent> & Serializable) value -> (long) value.value())
                         .allowedLateness(Time.seconds(ALLOWED_LATENESS))
-                        .reduce((ReduceFunction<SampleEvent>) (value1, value2) -> value1.value() > value2.value() ? value1 : value2, new PassThroughWindowFunction<>(), TypeInformation.of(SampleEvent.class));
+                        .reduce(sampleEventReduceFunction, new PassThroughWindowFunction<>(), TypeInformation.of(SampleEvent.class));
             else if (windowType.endsWith("delta"))
                 sampleEventDataStreamSink = extendedKeyedStream
                         .frameDelta(Long.parseLong(params[0]), (ToLongFunction<SampleEvent> & Serializable) value -> (long) value.value())
                         .allowedLateness(Time.seconds(ALLOWED_LATENESS))
-                        .reduce((ReduceFunction<SampleEvent>) (value1, value2) -> value1.value() > value2.value() ? value1 : value2, new PassThroughWindowFunction<>(), TypeInformation.of(SampleEvent.class));
+                        .reduce(sampleEventReduceFunction, new PassThroughWindowFunction<>(), TypeInformation.of(SampleEvent.class));
             else if (windowType.endsWith("aggregate")) {
 
-                ReduceFunction<SampleEvent> sampleEventReduceFunction = (value1, value2) -> new SampleEvent(value1.getKey(), value1.value() + value2.value(), Math.max(value1.timestamp(), value2.timestamp()));
+
 
                 sampleEventDataStreamSink = extendedKeyedStream
                         .frameAggregate((BiFunction<Long, Long, Long> & Serializable) Long::sum, 0L, Long.parseLong(params[0]), (ToLongFunction<SampleEvent> & Serializable) value -> (long) value.value())
