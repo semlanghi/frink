@@ -35,8 +35,8 @@ fi
 for value in "1000;50" "1000;100" "1000;150" "1000;200" "1000;250" "1000;300"; do
   for tmpWindowType in "${windowTypeList[@]}"; do
         echo "Start consuming from kafka topic $TOPIC with parameters $value:"
-        echo java -cp target/frink-1.0-SNAPSHOT.jar plainevents.SampleRunnerFile --mode ${mode} --inputFilePath "$inputFilePath" --bufferType $bufferType --windowType $tmpWindowType --windowParams $value
-        java -cp target/frink-1.0-SNAPSHOT.jar plainevents.SampleRunnerFile --mode ${mode} --inputFilePath "$inputFilePath" --bufferType $bufferType --windowType $tmpWindowType --windowParams $value &> run${tmpWindowType}-${bufferType}-${value}.out &
+        echo java -Xmx2g -cp target/frink-1.0-SNAPSHOT.jar plainevents.SampleRunnerFile --mode ${mode} --inputFilePath "$inputFilePath" --bufferType $bufferType --windowType $tmpWindowType --windowParams $value
+        java -Xmx2g -cp target/frink-1.0-SNAPSHOT.jar plainevents.SampleRunnerFile --mode ${mode} --inputFilePath "$inputFilePath" --bufferType $bufferType --windowType $tmpWindowType --windowParams $value &> run${tmpWindowType}-${bufferType}-${value}.out &
         wait
         echo "Finished consuming."
   done
