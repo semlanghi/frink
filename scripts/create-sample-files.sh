@@ -52,7 +52,7 @@ fi
 
 
 
-for value in "1000;50" "1000;100" "1000;150" "1000;200" "1000;250" "1000;300"; do
+for value in "1000;50" "1000;100" "1000;150" "1000;200" "1000;250" "1000;300" "1000;500" "1000;1000" "10000;1500" "10000;2000" "10000;2500" "10000;3000" "10000;5000" "10000;10000"  "100000;15000" "100000;20000" "100000;25000" "100000;30000" "100000;50000" "100000;100000"; do
   for tmpWindowType in "${windowTypeList[@]}"; do
     echo "Starting Creating file for configuration (threshold;size) = $value"
     echo java -Xmx2g -cp ../target/frink-1.0-SNAPSHOT.jar plainevents.datagenerator.SampleEventFileBuilder --path ${input} --windowParams "$value" --windowType ${tmpWindowType} --max-events ${maxevents} #&> loading.out
