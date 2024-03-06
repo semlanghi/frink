@@ -396,7 +396,7 @@ public class StateAwareMultiBufferWindowOperator<K, IN, ACC, OUT, W extends Wind
                                       Collection<W> mergedWindows, W stateWindowResult,
                                       Collection<W> mergedStateWindows) throws Exception {
 
-                        if ((windowAssigner.isEventTime() && mergeResult.maxTimestamp() + allowedLateness <= internalTimerService.currentWatermark())) {
+                        if ((windowAssigner.isEventTime() && mergeResult.maxTimestamp() <= internalTimerService.currentWatermark())) {
                             throw new UnsupportedOperationException("The end timestamp of an " +
                                                                     "event-time window cannot become earlier than the current watermark " +
                                                                     "by merging. Current watermark: " + internalTimerService.currentWatermark() +

@@ -8,6 +8,7 @@ import org.apache.flink.streaming.api.windowing.assigners.WindowAssigner;
 import org.apache.flink.streaming.api.windowing.evictors.Evictor;
 import org.apache.flink.streaming.api.windowing.triggers.Trigger;
 import org.apache.flink.streaming.api.windowing.windows.GlobalWindow;
+import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import windowing.frames.AggregateWindowing;
 import windowing.frames.DeltaWindowing;
 import windowing.frames.SingleBufferWindowing;
@@ -68,7 +69,7 @@ public class ExtendedKeyedStream<T, K> extends KeyedStream<T, K> {
                 .trigger(singleBufferWindowing.singleBufferTrigger());
     }
 
-    public StateAwareWindowedStream timeTumblingSingle(Long width) {
+    public StateAwareWindowedStream<T, K, GlobalWindow> timeTumblingSingle(Long width) {
 //        SingleBufferWindowing<T, GlobalWindow> singleBufferWindowing = new FrinkTumblingEventTimeWindows<>(width);//new AggregateWindowing<>(agg, startValue, threshold, toLongFunction);
 //        return new StateAwareWindowedStream<>(this, (WindowAssigner<T, GlobalWindow>) GlobalWindows.create())
 //                .evictor(singleBufferWindowing.singleBufferEvictor())
@@ -76,14 +77,26 @@ public class ExtendedKeyedStream<T, K> extends KeyedStream<T, K> {
         return timeSlidingSingle(width, width);
     }
 
-    public StateAwareWindowedStream timeSlidingSingle(Long width, Long slide) {
+    public StateAwareWindowedStream<T, K, GlobalWindow> timeSlidingSingle(Long width, Long slide) {
         SingleBufferWindowing<T, GlobalWindow> singleBufferWindowing = new FrinkSlidingEventTimeWindows<>(width, slide);
         Trigger<T, GlobalWindow> trigger = singleBufferWindowing.singleBufferTrigger();
         Evictor<T, GlobalWindow> evictor = singleBufferWindowing.singleBufferEvictor();
         return new StateAwareWindowedStream<>(this, (WindowAssigner<T, GlobalWindow>) GlobalWindows.create())
                 .evictor(evictor)
                 .trigger(trigger);
+    }
 
+
+    public StateAwareWindowedStream<T, K, TimeWindow> timeTumblingMulti(Long width) {
+//        SingleBufferWindowing<T, GlobalWindow> singleBufferWindowing = new FrinkTumblingEventTimeWindows<>(width);//new AggregateWindowing<>(agg, startValue, threshold, toLongFunction);
+//        return new StateAwareWindowedStream<>(this, (WindowAssigner<T, GlobalWindow>) GlobalWindows.create())
+//                .evictor(singleBufferWindowing.singleBufferEvictor())
+//                .trigger(singleBufferWindowing.singleBufferTrigger());
+        return timeSlidingMulti(width, width);
+    }
+
+    public StateAwareWindowedStream<T, K, TimeWindow> timeSlidingMulti(Long width, Long slide) {
+        return new StateAwareWindowedStream<>(this, new FrinkSlidingEventTimeWindows<>(width, slide));
     }
 
 }

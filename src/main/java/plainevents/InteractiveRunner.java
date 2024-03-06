@@ -142,12 +142,10 @@ public class InteractiveRunner {
                                 TypeInformation.of(SampleEvent.class));
             else if (JOB_TYPE.endsWith("tumbling")) {
                 ReduceFunction<SampleEvent> sampleEventReduceFunction = (value1, value2) -> new SampleEvent(value1.getKey(), value1.value() + value2.value(), Math.max(value1.timestamp(), value2.timestamp()));
-                PassThroughWindowFunction<Object, Window, Object> function = new PassThroughWindowFunction<>();
                 sampleEventDataStreamSink = extendedKeyedStream.timeTumblingSingle(5000L)
                         .allowedLateness(Time.seconds(ALLOWED_LATENESS))
-                        .reduce(
-                                sampleEventReduceFunction,
-                                function,
+                        .reduce(sampleEventReduceFunction,
+                                new PassThroughWindowFunction<>(),
                                 TypeInformation.of(SampleEvent.class));
             } else throw new IllegalFormatFlagsException("No valid frame specified.");
 

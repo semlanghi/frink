@@ -11,6 +11,7 @@ import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.datastream.WindowedStream;
+import org.apache.flink.streaming.api.functions.windowing.PassThroughWindowFunction;
 import org.apache.flink.streaming.api.functions.windowing.ReduceApplyWindowFunction;
 import org.apache.flink.streaming.api.functions.windowing.WindowFunction;
 import org.apache.flink.streaming.api.operators.OneInputStreamOperator;
@@ -29,6 +30,7 @@ import org.apache.flink.util.Preconditions;
 import windowing.frames.FrameWindowing;
 import windowing.frames.StateAwareMultiBufferWindowOperator;
 import windowing.frames.StateAwareSingleBufferWindowOperator;
+import windowing.time.FrinkSlidingEventTimeWindows;
 import windowing.time.FrinkTimeBasedMultiBufferWindowOperator;
 import windowing.time.FrinkTimeBasedSingleBufferWindowOperator;
 
@@ -52,13 +54,13 @@ public class StateAwareWindowedStream<T, K, W extends Window> extends WindowedSt
     }
 
     @PublicEvolving
-    public WindowedStream<T, K, W> allowedLateness(Time lateness) {
+    public StateAwareWindowedStream<T, K, W> allowedLateness(Time lateness) {
         visibleAllowedLateness = lateness.toMilliseconds();
         return this;
     }
 
     @PublicEvolving
-    public WindowedStream<T, K, W> sideOutputLateData(OutputTag<T> outputTag) {
+    public StateAwareWindowedStream<T, K, W> sideOutputLateData(OutputTag<T> outputTag) {
         Preconditions.checkNotNull(outputTag, "Side output tag must not be null.");
         this.visibleLateDataOutputTag = visibleInput.getExecutionEnvironment().clean(outputTag);
         super.sideOutputLateData(outputTag);
@@ -124,21 +126,7 @@ public class StateAwareWindowedStream<T, K, W extends Window> extends WindowedSt
         ListStateDescriptor<StreamRecord<T>> stateDesc =
                 new ListStateDescriptor<>("window-contents", streamRecordSerializer);
 
-        if (this.isFrame()) {
-            if (visibleEvictor != null) {
-                operator =
-                        new StateAwareSingleBufferWindowOperator<>(visibleWindowAssigner,
-                                visibleWindowAssigner.getWindowSerializer(getExecutionEnvironment().getConfig()),
-                                keySel,
-                                visibleInput.getKeyType().createSerializer(getExecutionEnvironment().getConfig()),
-                                stateDesc,
-                                new InternalIterableWindowFunction<>(new ReduceApplyWindowFunction<>(reduceFunction, function)),
-                                visibleTrigger,
-                                visibleEvictor,
-                                visibleAllowedLateness,
-                                visibleLateDataOutputTag);
-
-            } else {
+        if (this.isFrame()) {//Multi-Buffer data-driven windowing
                 operator =
                         new StateAwareMultiBufferWindowOperator<>(visibleWindowAssigner,
                                 visibleWindowAssigner.getWindowSerializer(getExecutionEnvironment().getConfig()),
@@ -149,23 +137,8 @@ public class StateAwareWindowedStream<T, K, W extends Window> extends WindowedSt
                                 visibleTrigger,
                                 visibleAllowedLateness,
                                 visibleLateDataOutputTag);
-            }
 
-        } else { //Time Based Windowing
-            if (visibleEvictor != null) {
-
-                operator =
-                        new FrinkTimeBasedSingleBufferWindowOperator<>(visibleWindowAssigner,
-                                visibleWindowAssigner.getWindowSerializer(getExecutionEnvironment().getConfig()),
-                                keySel,
-                                visibleInput.getKeyType().createSerializer(getExecutionEnvironment().getConfig()),
-                                stateDesc,
-                                new InternalIterableWindowFunction<>(new ReduceApplyWindowFunction<>(reduceFunction, function)),
-                                visibleTrigger,
-                                visibleEvictor,
-                                visibleAllowedLateness,
-                                visibleLateDataOutputTag);
-            } else {
+        } else if (this.isTime()){ // Multi-Buffer Time Based Windowing
                 operator =
                         new FrinkTimeBasedMultiBufferWindowOperator<>(
                                 visibleWindowAssigner,
@@ -177,13 +150,43 @@ public class StateAwareWindowedStream<T, K, W extends Window> extends WindowedSt
                                 visibleTrigger,
                                 visibleAllowedLateness,
                                 visibleLateDataOutputTag);
-            }
-        }
+        } else if (visibleEvictor != null){ //Single-buffer
+
+             if (visibleTrigger instanceof FrameWindowing.FrameTrigger){
+                    operator = new StateAwareSingleBufferWindowOperator<>(visibleWindowAssigner,
+                            visibleWindowAssigner.getWindowSerializer(getExecutionEnvironment().getConfig()),
+                            keySel,
+                            visibleInput.getKeyType().createSerializer(getExecutionEnvironment().getConfig()),
+                            stateDesc,
+                            new InternalIterableWindowFunction<>(new ReduceApplyWindowFunction<>(reduceFunction, function)),
+                            visibleTrigger,
+                            visibleEvictor,
+                            visibleAllowedLateness,
+                            visibleLateDataOutputTag);
+            } else {
+                 operator =
+                         new FrinkTimeBasedSingleBufferWindowOperator<>(visibleWindowAssigner,
+                                 visibleWindowAssigner.getWindowSerializer(getExecutionEnvironment().getConfig()),
+                                 keySel,
+                                 visibleInput.getKeyType().createSerializer(getExecutionEnvironment().getConfig()),
+                                 stateDesc,
+                                 new InternalIterableWindowFunction<>(new ReduceApplyWindowFunction<>(reduceFunction, function)),
+                                 visibleTrigger,
+                                 visibleEvictor,
+                                 visibleAllowedLateness,
+                                 visibleLateDataOutputTag);
+             }
+
+        } else throw new RuntimeException("Windowing setup not correct.");
         return visibleInput.transform(opName, resultType, operator);
     }
 
     private boolean isFrame() {
         return visibleWindowAssigner instanceof FrameWindowing;
+    }
+
+    private boolean isTime() {
+        return visibleWindowAssigner instanceof FrinkSlidingEventTimeWindows;
     }
 
 

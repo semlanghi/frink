@@ -1,11 +1,6 @@
 package plainevents;
 
-import linearroad.event.CustomStringSchema;
-import linearroad.event.FlinkKafkaCustomConsumer;
 import org.apache.flink.api.common.functions.ReduceFunction;
-import org.apache.flink.api.common.io.ratelimiting.FlinkConnectorRateLimiter;
-import org.apache.flink.api.common.io.ratelimiting.GuavaFlinkConnectorRateLimiter;
-import org.apache.flink.api.common.serialization.SimpleStringSchema;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.utils.ParameterTool;
 import org.apache.flink.configuration.Configuration;
@@ -16,7 +11,6 @@ import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.AssignerWithPunctuatedWatermarks;
-import org.apache.flink.streaming.api.functions.timestamps.AscendingTimestampExtractor;
 import org.apache.flink.streaming.api.functions.windowing.PassThroughWindowFunction;
 import org.apache.flink.streaming.api.watermark.Watermark;
 import org.apache.flink.streaming.api.windowing.time.Time;
@@ -26,16 +20,10 @@ import windowing.ExtendedKeyedStream;
 import javax.annotation.Nullable;
 import java.io.Serializable;
 import java.util.IllegalFormatFlagsException;
-import java.util.Properties;
 import java.util.function.BiFunction;
 import java.util.function.ToLongFunction;
 
-import static org.apache.flink.streaming.connectors.kafka.FlinkKafkaConsumer09.KEY_POLL_TIMEOUT;
-
 public class SampleRunnerFile {
-
-    private static final long ALLOWED_LATENESS = 5;
-    static long windowLength = 1L;
 
     public static void main(String[] args) throws Exception {
 
@@ -47,6 +35,7 @@ public class SampleRunnerFile {
         String windowParams = parameters.get("windowParams");
         String inputFilePath = parameters.get("inputFilePath");
         Long maxRecords = parameters.getLong("maxRecords", Long.MAX_VALUE);
+        long allowedLateness = parameters.getLong("allowedLateness", Long.MAX_VALUE/2);
         long maxMinutes = parameters.getLong("maxMinutes", 0);
         StreamExecutionEnvironment env;
 
@@ -101,69 +90,62 @@ public class SampleRunnerFile {
             if (windowType.endsWith("threshold"))
                 sampleEventDataStreamSink = extendedKeyedStream
                         .frameThreshold(Long.parseLong(params[0]), (ToLongFunction<SampleEvent> & Serializable) value -> (long) value.value())
-                        .allowedLateness(Time.seconds(ALLOWED_LATENESS))
+                        .allowedLateness(Time.seconds(allowedLateness))
                         .reduce(sampleEventReduceFunction, new PassThroughWindowFunction<>(), TypeInformation.of(SampleEvent.class));
             else if (windowType.endsWith("delta"))
                 sampleEventDataStreamSink = extendedKeyedStream
                         .frameDelta(Long.parseLong(params[0]), (ToLongFunction<SampleEvent> & Serializable) value -> (long) value.value())
-                        .allowedLateness(Time.seconds(ALLOWED_LATENESS))
+                        .allowedLateness(Time.seconds(allowedLateness))
                         .reduce(sampleEventReduceFunction, new PassThroughWindowFunction<>(), TypeInformation.of(SampleEvent.class));
             else if (windowType.endsWith("aggregate")) {
-
-
-
                 sampleEventDataStreamSink = extendedKeyedStream
                         .frameAggregate((BiFunction<Long, Long, Long> & Serializable) Long::sum, 0L, Long.parseLong(params[0]), (ToLongFunction<SampleEvent> & Serializable) value -> (long) value.value())
-                        .allowedLateness(Time.seconds(ALLOWED_LATENESS))
-//                        .reduce((ReduceFunction<SampleEvent>) (value1, value2) -> value1.value() > value2.value() ? value1 : value2, new PassThroughWindowFunction<>(), TypeInformation.of(SampleEvent.class));
+                        .allowedLateness(Time.seconds(allowedLateness))
+                        .reduce(sampleEventReduceFunction, new PassThroughWindowFunction<>(), TypeInformation.of(SampleEvent.class));
+            } else if (windowType.endsWith("time")) {
+                sampleEventDataStreamSink = extendedKeyedStream
+                        .timeSlidingMulti(Long.parseLong(params[1]), Long.parseLong(params[2]))
+                        .allowedLateness(Time.seconds(allowedLateness))
                         .reduce(sampleEventReduceFunction, new PassThroughWindowFunction<>(), TypeInformation.of(SampleEvent.class));
 
             } else throw new IllegalFormatFlagsException("No valid frame specified.");
 
             DataStream<String> metricsStream = sampleEventDataStreamSink.getSideOutput(metricsSideStream);
-            metricsStream.writeAsText("./metrics-" + windowParams + "-" + bufferType + "-" + windowType + " parallelism_" + env.getParallelism() + " - latency", FileSystem.WriteMode.OVERWRITE);
+            metricsStream.writeAsText("./metrics-noevict" + windowParams + "-" + bufferType + "-" + windowType + " parallelism_" + env.getParallelism() + " - latency", FileSystem.WriteMode.OVERWRITE);
 
             sampleEventDataStreamSink.writeAsText("./output-" + windowType + "params " + windowParams + "parallelism " + env.getParallelism(), FileSystem.WriteMode.OVERWRITE);
             env.execute(windowType);
-            //TODO time-based window
-//            String winLen = parameters.get("windowSize");
-//
-//            if (winLen != null) {
-//                try {
-//                    windowLength = Long.parseLong(winLen);
-//                } catch (Exception e) {
-//                    e.printStackTrace();
-//                }
-//            }
+
         } else if (bufferType.startsWith("single_buffer")) {
             ExtendedKeyedStream<SampleEvent, Long> extendedKeyedStream = new ExtendedKeyedStream<>(rawEventStream, SampleEvent::getKey);
 
             SingleOutputStreamOperator<SampleEvent> sampleEventDataStreamSink;
 
+            ReduceFunction<SampleEvent> sampleEventReduceFunction = (value1, value2) -> new SampleEvent(value1.getKey(), value1.value() + value2.value(), Math.max(value1.timestamp(), value2.timestamp()));
+
             String[] params = windowParams.split(";");
             if (windowType.endsWith("threshold")) {
-                sampleEventDataStreamSink = extendedKeyedStream.frameThresholdSingle(Long.parseLong(params[0]), (ToLongFunction<SampleEvent> & Serializable) value -> (long) value.value()).reduce((ReduceFunction<SampleEvent>) (value1, value2) -> value1.value() > value2.value() ? value1 : value2, new PassThroughWindowFunction<>(), TypeInformation.of(SampleEvent.class));
+                sampleEventDataStreamSink = extendedKeyedStream
+                        .frameThresholdSingle(Long.parseLong(params[0]), (ToLongFunction<SampleEvent> & Serializable) value -> (long) value.value())
+                        .reduce(sampleEventReduceFunction, new PassThroughWindowFunction<>(), TypeInformation.of(SampleEvent.class));
             } else if (windowType.endsWith("delta")) {
-                sampleEventDataStreamSink = extendedKeyedStream.frameDeltaSingle(Long.parseLong(params[0]), (ToLongFunction<SampleEvent> & Serializable) value -> (long) value.value()).reduce((ReduceFunction<SampleEvent>) (value1, value2) -> value1.value() > value2.value() ? value1 : value2, new PassThroughWindowFunction<>(), TypeInformation.of(SampleEvent.class));
+                sampleEventDataStreamSink = extendedKeyedStream
+                        .frameDeltaSingle(Long.parseLong(params[0]), (ToLongFunction<SampleEvent> & Serializable) value -> (long) value.value())
+                        .reduce(sampleEventReduceFunction, new PassThroughWindowFunction<>(), TypeInformation.of(SampleEvent.class));
 
             } else if (windowType.endsWith("aggregate")) {
-
-                ReduceFunction<SampleEvent> sampleEventReduceFunction = (value1, value2) -> new SampleEvent(value1.getKey(), value1.value() + value2.value(), Math.max(value1.timestamp(), value2.timestamp()));
-
                 sampleEventDataStreamSink = extendedKeyedStream
-                        .frameAggregateSingle(
-                        (BiFunction<Long, Long, Long> & Serializable) Long::sum,
-                        0L, Long.parseLong(params[0]),
-                        (ToLongFunction<SampleEvent> & Serializable) value ->
-                                (long) value.value())
-//                        .reduce((ReduceFunction<SampleEvent>) (value1, value2)
-//                                -> value1.value() > value2.value() ? value1 : value2, new PassThroughWindowFunction<>(),
-//                        TypeInformation.of(SampleEvent.class));
+                        .frameAggregateSingle((BiFunction<Long, Long, Long> & Serializable) Long::sum, 0L, Long.parseLong(params[0]), (ToLongFunction<SampleEvent> & Serializable) value -> (long) value.value())
                         .reduce(sampleEventReduceFunction, new PassThroughWindowFunction<>(), TypeInformation.of(SampleEvent.class));
+            } else if (windowType.endsWith("time")) {
+                sampleEventDataStreamSink = extendedKeyedStream
+                        .timeSlidingSingle(Long.parseLong(params[1]), Long.parseLong(params[2]))
+                        .reduce(sampleEventReduceFunction, new PassThroughWindowFunction<>(), TypeInformation.of(SampleEvent.class));
+
             } else throw new IllegalFormatFlagsException("No valid frame specified.");
 
             DataStream<String> latencyStream = sampleEventDataStreamSink.getSideOutput(metricsSideStream);
-            latencyStream.writeAsText("./metrics-" + windowParams + "-" + bufferType + "-" + windowType + " parallelism_" + env.getParallelism() + " - latency", FileSystem.WriteMode.OVERWRITE);
+            latencyStream.writeAsText("./metrics-noevict-" + windowParams + "-" + bufferType + "-" + windowType + " parallelism_" + env.getParallelism() + " - latency", FileSystem.WriteMode.OVERWRITE);
 
             sampleEventDataStreamSink.writeAsText("./output-" + windowParams + "-" + bufferType + "-" + windowType + " parallelism_" + env.getParallelism(), FileSystem.WriteMode.OVERWRITE);
             env.execute(windowType);

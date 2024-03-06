@@ -97,12 +97,10 @@ public class InteractiveRunner {
                                 TypeInformation.of(SpeedEvent.class));
             else if (JOB_TYPE.endsWith("tumbling")) {
                 ReduceFunction<SpeedEvent> speedEventReduceFunction = (value1, value2) -> new SpeedEvent(value1.getKey(), Math.max(value1.getTimestamp(), value2.getTimestamp()), value1.getValue() + value2.getValue());
-                PassThroughWindowFunction<Object, Window, Object> function = new PassThroughWindowFunction<>();
                 speedEventDataStreamSink = extendedKeyedStream.timeSliding(5000L, 1000L)
                         .allowedLateness(Time.seconds(ALLOWED_LATENESS))
-                        .reduce(
-                                speedEventReduceFunction,
-                                function,
+                        .reduce(speedEventReduceFunction,
+                                new PassThroughWindowFunction<>(),
                                 TypeInformation.of(SpeedEvent.class));
             } else throw new IllegalFormatFlagsException("No valid frame specified.");
 
@@ -133,12 +131,11 @@ public class InteractiveRunner {
                                 TypeInformation.of(SpeedEvent.class));
             else if (JOB_TYPE.endsWith("tumbling")) {
                 ReduceFunction<SpeedEvent> speedEventReduceFunction = (value1, value2) -> new SpeedEvent(value1.getKey(), Math.max(value1.getTimestamp(), value2.getTimestamp()), value1.getValue() + value2.getValue());
-                PassThroughWindowFunction<Object, Window, Object> function = new PassThroughWindowFunction<>();
                 speedEventDataStreamSink = extendedKeyedStream.timeTumblingSingle(5000L)
                         .allowedLateness(Time.seconds(ALLOWED_LATENESS))
                         .reduce(
                                 speedEventReduceFunction,
-                                function,
+                                new PassThroughWindowFunction<>(),
                                 TypeInformation.of(SpeedEvent.class));
             } else throw new IllegalFormatFlagsException("No valid frame specified.");
 
@@ -150,7 +147,6 @@ public class InteractiveRunner {
             speedEventDataStreamSink.writeAsText("./src/main/resources/output-" + JOB_TYPE + " parallelism " + streamExecutionEnvironment.getParallelism(), FileSystem.WriteMode.OVERWRITE);
             streamExecutionEnvironment.execute(JOB_TYPE);
         }
-
     }
 
     public static class FixedSource implements SourceFunction<SpeedEvent> {
